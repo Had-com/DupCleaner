@@ -19,6 +19,14 @@ public static class FileId {
   [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)] static extern SafeFileHandle CreateFileW(string n, uint access, uint share, IntPtr sec, uint disp, uint flags, IntPtr t);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetFileInformationByHandle(SafeFileHandle h, out BHFI i);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  public static int Links(string path) {
+    string p = path.StartsWith(@"\\") ? path : @"\\?\" + path;
+    using (SafeFileHandle h = CreateFileW(p, 0, 7, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+      if (h.IsInvalid) return 0;
+      BHFI i; if (!GetFileInformationByHandle(h, out i)) return 0;
+      return (int)i.Links;
+    }
+  }
   public static string Get(string path) {
     string p = path.StartsWith(@"\\") ? path : @"\\?\" + path;
     using (SafeFileHandle h = CreateFileW(p, 0, 7, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
@@ -806,6 +814,19 @@ function Write-CrashLog([string]$where, $err) {
         Add-Content -LiteralPath $script:LogPath -Value "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] $where`r`n$msg`r`n"
     } catch { }
 }
+# every error that the program handles quietly (a file that vanished, a folder it may not read, ...) is recorded in errors.log as well: message, source line, and how often it happened
+$script:ErrPath = Join-Path $env:LOCALAPPDATA 'DupCleaner\errors.log'; $script:ErrSeen = @{}
+function Write-ErrLog($er) {
+    try {
+        $msg = $(if ($er -is [Management.Automation.ErrorRecord]) { $er.Exception.Message } else { "$er" }); $ln = $(if ($er -is [Management.Automation.ErrorRecord]) { $er.InvocationInfo.ScriptLineNumber } else { 0 })
+        if ($script:ErrSeen.Count -gt 2000) { $script:ErrSeen.Clear() }   # messages that contain paths are all different; do not let the counter table grow without limit
+        $key = "$ln|$msg"; $n = 1 + [int]$script:ErrSeen[$key]; $script:ErrSeen[$key] = $n
+        if ($n -ne 1 -and $n -ne 10 -and $n -ne 100 -and $n -ne 1000 -and $n -ne 10000) { return }   # the first time, then at 10, 100, 1000 ...
+        if ((Test-Path -LiteralPath $script:ErrPath) -and (Get-Item -LiteralPath $script:ErrPath).Length -gt 5MB) { return }
+        [void][IO.Directory]::CreateDirectory((Split-Path $script:ErrPath))
+        Add-Content -LiteralPath $script:ErrPath -Value "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] line $ln (seen $n x): $msg"
+    } catch { }
+}
 [Windows.Forms.Application]::SetUnhandledExceptionMode([Windows.Forms.UnhandledExceptionMode]::CatchException)
 [Windows.Forms.Application]::add_ThreadException({
     param($s, $e)
@@ -826,7 +847,7 @@ try {
         $script:PrevCrash = [IO.File]::ReadAllText($script:RunFile)
         Write-CrashLog 'PREVIOUS RUN ENDED WITHOUT A CLEAN EXIT (killed, out of memory, or the PC shut down). Last known state:' $script:PrevCrash
     }
-} catch { }
+} catch { Write-ErrLog $_ }
 $script:Started = Get-Date
 $script:BeatClock = [Diagnostics.Stopwatch]::StartNew(); $script:LastBeat = -100000L
 function Write-Heartbeat([bool]$force = $false) {
@@ -834,7 +855,7 @@ function Write-Heartbeat([bool]$force = $false) {
     $script:LastBeat = $script:BeatClock.ElapsedMilliseconds
     try {
         $pr = [Diagnostics.Process]::GetCurrentProcess()
-        $roots = ''; try { $roots = (@($lstRoots.Items) -join ' | ') } catch { }
+        $roots = ''; try { $roots = (@($lstRoots.Items) -join ' | ') } catch { Write-ErrLog $_ }
         $txt = @(
             "Started:        $($script:Started.ToString('yyyy-MM-dd HH:mm:ss'))",
             "Last heartbeat: $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))",
@@ -846,9 +867,9 @@ function Write-Heartbeat([bool]$force = $false) {
         ) -join "`r`n"
         [void][IO.Directory]::CreateDirectory((Split-Path $script:RunFile))
         [IO.File]::WriteAllText($script:RunFile, $txt)
-    } catch { }
+    } catch { Write-ErrLog $_ }
 }
-function Remove-Heartbeat { try { [IO.File]::Delete($script:RunFile) } catch { } }
+function Remove-Heartbeat { try { [IO.File]::Delete($script:RunFile) } catch { Write-ErrLog $_ } }
 
 # Flat tab strip that paints its own background (the native strip stays light grey in a dark window) and window-theme helpers for dark scroll bars / title bar
 if (-not ('FlatTabs' -as [type])) {
@@ -893,7 +914,7 @@ $script:Busy = $false
 $script:Results = @{ File = $null; Folder = $null; Nested = $null }   # Nested: sub-folder sets inside duplicate parents (read-only, found by the filter)
 
 $form = New-Object Windows.Forms.Form
-$form.Text = 'DupCleaner'
+$form.Text = 'DupCleaner 2.0'
 $form.Font = New-Object Drawing.Font('Segoe UI', 11)
 $form.AutoScaleMode = 'Font'
 $form.StartPosition = 'Manual'
@@ -908,7 +929,7 @@ $form.Padding = New-Object Windows.Forms.Padding(10)
 # colours of the whole window (same as the approved mock-up)
 # dark or light follows the Windows app setting (dark when the setting is missing)
 $script:Dark = $true
-try { $lt = Get-ItemPropertyValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -ErrorAction Stop; if ($lt -eq 1) { $script:Dark = $false } } catch { }
+try { $lt = Get-ItemPropertyValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -ErrorAction Stop; if ($lt -eq 1) { $script:Dark = $false } } catch { Write-ErrLog $_ }
 function C3($r, $g, $b) { [Drawing.Color]::FromArgb($r, $g, $b) }
 # rounded corners: the control is clipped to a rounded shape and gets a thin smooth border (like the mock-up)
 $script:RoundInfo = @{}
@@ -931,7 +952,7 @@ function Style-Split($s) {
         $b.Dispose()
     })
     $s.Add_SplitterMoved({ param($sx, $e) $sx.Invalidate(); if ($script:LayoutReady) { Save-Layout } })
-    try { $s.Panel1MinSize = [int](120 * $sc); $s.Panel2MinSize = [int](120 * $sc) } catch { }
+    try { $s.Panel1MinSize = [int](120 * $sc); $s.Panel2MinSize = [int](120 * $sc) } catch { Write-ErrLog $_ }
 }
 function Get-SplitTotal($s) { if ($s.Orientation -eq 'Vertical') { $s.Width } else { $s.Height } }
 function Get-SplitShare($s) { if ($s.Tag -is [double] -and $s.Tag -gt 0) { return [double]$s.Tag }; $t = Get-SplitTotal $s; if ($t -gt 0) { [Math]::Round($s.SplitterDistance / $t, 4) } else { 0.5 } }
@@ -942,7 +963,7 @@ function Set-SplitShare($s, [double]$f) {
 }
 function New-Split($orient, [double]$share) {
     $c = New-Object Windows.Forms.SplitContainer; $c.Dock = 'Fill'; $c.Orientation = $orient; $c.Tag = [double]$share
-    $c.Add_SizeChanged({ param($s, $e) if ($s.Tag -is [double] -and $s.Tag -gt 0) { $t = Get-SplitTotal $s; if ($t -gt 300) { try { $s.SplitterDistance = [int]($t * $s.Tag); $s.Tag = 0.0 } catch { } } } })
+    $c.Add_SizeChanged({ param($s, $e) if ($s.Tag -is [double] -and $s.Tag -gt 0) { $t = Get-SplitTotal $s; if ($t -gt 300) { try { $s.SplitterDistance = [int]($t * $s.Tag); $s.Tag = 0.0 } catch { Write-ErrLog $_ } } } })
     Style-Split $c; $c
 }
 # master tick box (like the header box in Explorer): ticked = every duplicate is selected, dash = some, empty = none; a click selects all (keep oldest) or clears everything
@@ -1002,7 +1023,7 @@ try {
     if ([IO.Path]::GetFileNameWithoutExtension($exe) -in 'DupCleaner', 'DupeFinder') { $ico = [Drawing.Icon]::ExtractAssociatedIcon($exe) }
     elseif ($PSCommandPath) { $f = Join-Path (Split-Path $PSCommandPath) 'DupCleaner.ico'; if (Test-Path -LiteralPath $f) { $ico = New-Object Drawing.Icon $f } }
     if ($ico) { $form.Icon = $ico }
-} catch { }
+} catch { Write-ErrLog $_ }
 
 function New-Btn($text, $primary = $false) {
     $b = New-Object Windows.Forms.Button
@@ -1251,7 +1272,7 @@ function New-View($title, $kind) {
         $v = $tabs.SelectedTab.Controls[0]
         if ($v.SelectedItems.Count) {
             $pth = $v.SelectedItems[0].Tag.Path
-            try { [void][Diagnostics.Process]::Start($pth) } catch { [void][Windows.Forms.MessageBox]::Show("Could not open:`n$pth`n`n$($_.Exception.Message)", 'DupCleaner') }
+            Open-File $pth
         }
     })
     $miWith = $cm.Items.Add('Open with...')
@@ -1321,7 +1342,7 @@ function New-View($title, $kind) {
     $lv.Add_MouseWheel({
         param($s, $e)
         if ([Windows.Forms.Control]::ModifierKeys -band [Windows.Forms.Keys]::Control) {   # Ctrl + wheel changes the text size
-            try { ([Windows.Forms.HandledMouseEventArgs]$e).Handled = $true } catch { }
+            try { ([Windows.Forms.HandledMouseEventArgs]$e).Handled = $true } catch { Write-ErrLog $_ }
             Set-ListFont ($script:ListFontSize + [math]::Sign($e.Delta))
         }
     })
@@ -1332,10 +1353,11 @@ function New-View($title, $kind) {
 $script:FilterCtl = @{}; $script:FilterText = @{ File = ''; Folder = '' }; $script:Crit = @{ File = $null; Folder = $null }; $script:MatchCount = @{ File = 0; Folder = 0 }
 $script:FilterKind = 'File'
 $script:ListFontSize = 11.0
+$script:OpenWith = @{}   # program used to open files: key = category (all, image, video, audio, document, text), value = path of an .exe
 try {
     $sp = Join-Path $env:LOCALAPPDATA 'DupCleaner\settings.json'
-    if (Test-Path -LiteralPath $sp) { $st = [IO.File]::ReadAllText($sp) | ConvertFrom-Json; if ($st.ListFont -ge 8 -and $st.ListFont -le 30) { $script:ListFontSize = [double]$st.ListFont } }
-} catch { }
+    if (Test-Path -LiteralPath $sp) { $st = [IO.File]::ReadAllText($sp) | ConvertFrom-Json; if ($st.ListFont -ge 8 -and $st.ListFont -le 30) { $script:ListFontSize = [double]$st.ListFont }; if ($st.OpenWith) { foreach ($pr in $st.OpenWith.PSObject.Properties) { if ($pr.Value) { $script:OpenWith[[string]$pr.Name] = [string]$pr.Value } } } }
+} catch { Write-ErrLog $_ }
 $script:ListFont = New-Object Drawing.Font('Segoe UI', [single]$script:ListFontSize)
 $script:ListBold = New-Object Drawing.Font($script:ListFont, [Drawing.FontStyle]::Bold)
 $script:FilterTimer = New-Object Windows.Forms.Timer; $script:FilterTimer.Interval = 350
@@ -1425,7 +1447,35 @@ function Test-SetMatch($set, $crit) {
 
 # ---- list text size (A- / A+ / Ctrl+wheel), remembered between runs
 $script:SettingsPath = Join-Path $env:LOCALAPPDATA 'DupCleaner\settings.json'
-function Save-Settings { try { [void][IO.Directory]::CreateDirectory((Split-Path $script:SettingsPath)); [IO.File]::WriteAllText($script:SettingsPath, ('{"ListFont":' + [string]$script:ListFontSize + '}'), (New-Object Text.UTF8Encoding($false))) } catch { } }
+function Save-Settings { try { [void][IO.Directory]::CreateDirectory((Split-Path $script:SettingsPath)); [IO.File]::WriteAllText($script:SettingsPath, (@{ ListFont = $script:ListFontSize; OpenWith = $script:OpenWith } | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding($false))) } catch { Write-ErrLog $_ } }
+# ---- which program opens a file (Open button, double-click, right-click Open): per type, else for all files, else the Windows default
+$script:OpenCats = [ordered]@{ all = 'All files (default)'; image = 'Pictures'; video = 'Videos'; audio = 'Music'; document = 'Documents'; text = 'Text and data' }
+function Get-OpenCategory([string]$path) {
+    $e = [IO.Path]::GetExtension($path).ToLowerInvariant().TrimStart('.')
+    if ('png jpg jpeg gif bmp webp tif tiff heic ico svg' -split ' ' -contains $e) { return 'image' }
+    if ('mp4 mkv avi mov wmv webm m4v mpg mpeg' -split ' ' -contains $e) { return 'video' }
+    if ('mp3 wav flac aac ogg m4a wma' -split ' ' -contains $e) { return 'audio' }
+    if ('pdf doc docx xls xlsx ppt pptx odt ods rtf' -split ' ' -contains $e) { return 'document' }
+    if ('txt csv log md json xml ini ps1 cmd bat html htm css js' -split ' ' -contains $e) { return 'text' }
+    return 'other'
+}
+function Open-File([string]$path) {
+    if (-not $path) { return }
+    $prog = $null; $missing = $null
+    if (-not [IO.Directory]::Exists($path)) {
+        foreach ($k in @((Get-OpenCategory $path), 'all')) {
+            if ($script:OpenWith.ContainsKey($k) -and $script:OpenWith[$k]) {
+                if ([IO.File]::Exists($script:OpenWith[$k])) { $prog = $script:OpenWith[$k]; break } elseif (-not $missing) { $missing = $script:OpenWith[$k] }
+            }
+        }
+    }
+    if ($prog) {
+        try { [void](Start-Process -FilePath $prog -ArgumentList ('"' + $path + '"')); return }
+        catch { $missing = $prog }
+    }
+    if ($missing) { [void][Windows.Forms.MessageBox]::Show("The program chosen for opening files is not available:`n$missing`n`nOpening with the Windows default instead.", 'DupCleaner') }
+    try { [void][Diagnostics.Process]::Start($path) } catch { [void][Windows.Forms.MessageBox]::Show("Could not open:`n$path`n`n$($_.Exception.Message)", 'DupCleaner') }
+}
 function Set-ListFont([double]$size) {
     $size = [math]::Max(8.0, [math]::Min(30.0, $size)); if ($size -eq $script:ListFontSize) { return }
     $ratio = $size / $script:ListFontSize; $script:ListFontSize = $size
@@ -1460,7 +1510,7 @@ function Get-IconKey([string]$name, [bool]$isDir) {
     $key = if ($isDir) { '<dir>' } else { $e = [IO.Path]::GetExtension($name).ToLowerInvariant(); if ($e) { $e } else { '<file>' } }
     if (-not $script:Icons.Images.ContainsKey($key)) {
         $bmp = $null
-        try { $bmp = [ShellIcon]::Get($(if ($isDir) { 'folder' } else { 'file' + [IO.Path]::GetExtension($name) }), $isDir) } catch { }
+        try { $bmp = [ShellIcon]::Get($(if ($isDir) { 'folder' } else { 'file' + [IO.Path]::GetExtension($name) }), $isDir) } catch { Write-ErrLog $_ }
         if (-not $bmp) { $bmp = New-Object Drawing.Bitmap 16, 16 }
         $script:Icons.Images.Add($key, $bmp)
     }
@@ -1475,16 +1525,53 @@ function Get-SetLine($set) {
 }
 
 # ---- left pane
+$script:ResortAt = 0; $script:ResortPending = $false; $script:InvAt = 0; $script:BucketAt = 0; $script:Buckets = @(0L, 0L, 0L)
+$script:SetKeys = @{}   # sort keys of the "largest and safest" order; only the set that was just investigated is recomputed
+function Get-SetArray([bool]$fresh) {
+    $sp = $script:SP; $f = $script:Results['Folder']
+    $mode = [math]::Max(0, $sp.Sort.SelectedIndex)
+    $arr = [SetUtil]::Sorted($f, $(if ($mode -eq 4) { 0 } else { $mode }), $sp.Search.Text.Trim())
+    if ($mode -eq 4 -and $arr.Length -gt 1) {   # highest safety score first, then the most space to free; sets not yet investigated come after the investigated ones, largest first
+        if ($fresh) { $script:SetKeys = @{} }
+        $rows = foreach ($s in $arr) {
+            $k = $script:SetKeys[$s]
+            if (-not $k) { $q = Get-SetScore $s; $fr = [double]$s.Size * ($s.Items.Count - 1); $k = [pscustomobject]@{ Known = $(if ($q) { 0 } else { 1 }); Score = $(if ($q) { -$q.Score } else { 0 }); Fr = -$fr }; if ($q) { $script:SetKeys[$s] = $k } }
+            [pscustomobject]@{ S = $s; Known = $k.Known; Score = $k.Score; Fr = $k.Fr }
+        }
+        $arr = @($rows | Sort-Object Known, Score, Fr | ForEach-Object { $_.S })
+    }
+    if ($script:SafetyFilter -gt 0) { $want = $(if ($script:SafetyFilter -le 5) { $script:SafetyClasses[$script:SafetyFilter - 1] } else { '' }); $arr = @($arr | Where-Object { (Get-SetBestClass $_) -eq $want }) }
+    $arr
+}
+# re-sort after one more set got its score: same items, new order; the selected set stays selected and the scroll position is kept; nothing is reloaded
+function Resort-SetList($changed) {
+    $sp = $script:SP; if (-not $sp -or $script:SpBusy) { return }
+    if ($changed) { $script:SetKeys.Remove($changed) }
+    $now = [Environment]::TickCount
+    if (($now - $script:ResortAt) -lt 2500 -and ($now - $script:ResortAt) -ge 0) { $script:ResortPending = $true; return }   # at most one re-order every 2.5 s, so the list does not flicker
+    $script:ResortAt = $now; $script:ResortPending = $false
+    $arr = @(Get-SetArray $false)
+    $cur = $sp.Lb.Items; $same = ($cur.Count -eq $arr.Length); if ($same) { for ($i = 0; $i -lt $arr.Length; $i++) { if (-not [object]::ReferenceEquals($cur[$i], $arr[$i])) { $same = $false; break } } }
+    if ($same) { return }   # same order: nothing to rebuild
+    $sel = $sp.Lb.SelectedItem; $top = $sp.Lb.TopIndex
+    $script:SpBusy = $true
+    $sp.Lb.BeginUpdate()
+    try {
+        $sp.Lb.Items.Clear(); if ($arr.Length -gt 0) { $sp.Lb.Items.AddRange([object[]]$arr) }
+        if ($sel) { $i = $sp.Lb.Items.IndexOf($sel); if ($i -ge 0) { $sp.Lb.SelectedIndex = $i } }
+        if ($sp.Lb.Items.Count -gt 0) { $sp.Lb.TopIndex = [math]::Min($top, $sp.Lb.Items.Count - 1) }
+    } finally { $sp.Lb.EndUpdate(); $script:SpBusy = $false }
+}
 function Rebuild-SetList {
     $sp = $script:SP; if (-not $sp) { return }
     $f = $script:Results['Folder']
-    $arr = [SetUtil]::Sorted($f, [math]::Max(0, $sp.Sort.SelectedIndex), $sp.Search.Text.Trim())
+    $arr = @(Get-SetArray $true)
     $prev = $script:SpCur
     $script:SpBusy = $true
     $sp.Lb.BeginUpdate()
     try { $sp.Lb.Items.Clear(); if ($arr.Length -gt 0) { $sp.Lb.Items.AddRange([object[]]$arr) } } finally { $sp.Lb.EndUpdate() }
     $total = $(if ($f) { $f.Count } else { 0 })
-    $sp.Count.Text = $(if ($null -eq $f) { 'No scan yet.' } elseif ($sp.Search.Text.Trim()) { "$($arr.Length) of $total sets match" } else { "$total duplicate folder sets" })
+    $sp.Count.Text = $(if ($null -eq $f) { 'No scan yet.' } elseif ($script:SafetyFilter -gt 0) { "$($arr.Length) of $total sets: $($script:SafetyFilterNames[$script:SafetyFilter])" } elseif ($sp.Search.Text.Trim()) { "$($arr.Length) of $total sets match" } else { "$total duplicate folder sets" })
     $idx = -1; if ($prev) { $idx = $sp.Lb.Items.IndexOf($prev) }
     if ($idx -lt 0 -and $arr.Length -gt 0) { $idx = 0 }
     if ($idx -ge 0) { $sp.Lb.SelectedIndex = $idx }
@@ -1497,7 +1584,7 @@ function Update-SetsPanel {
     if (-not $script:SP -or $script:Scanning) { return }
     $f = $script:Results['Folder']
     $sig = "$(if ($f) { $f.GetHashCode() })|$(if ($f) { $f.Count })"
-    if ($sig -ne $script:SpSig) { $script:SpSig = $sig; Rebuild-SetList }
+    if ($sig -ne $script:SpSig) { $script:SpSig = $sig; Rebuild-SetList; Start-AutoAssess }
     else { $script:SP.Lb.Invalidate(); Refresh-Cards }
 }
 
@@ -1514,6 +1601,703 @@ function Test-SetStale($set) {
     if ($keep.Count -lt 2) { [void]$script:Results['Folder'].Remove($set); return $true }
     $false
 }
+# ===================================================================================================
+# Deletion-safety investigation and assessment (read-only, rule-based and deterministic: the same evidence
+# and policy version always give the same result; nothing here deletes, renames, moves or changes anything)
+# ===================================================================================================
+$script:SafetyPolicy = '1.0'
+$script:SafetyWeights = [ordered]@{ Runtime = 20; Ownership = 20; Config = 15; Data = 15; Duplicate = 15; Lifecycle = 10; Filesystem = 5 }
+$script:SafetyDimNames = @{ Runtime = 'Running programs and services'; Ownership = 'Application ownership'; Config = 'Configuration and registry references'; Data = 'Data type and reconstructibility'; Duplicate = 'Duplicate equivalence'; Lifecycle = 'Version and lifecycle'; Filesystem = 'Filesystem links and integrity' }
+$script:SafetyCache = @{}      # folder path (lower case) -> assessment
+$script:SafetyCtx = $null      # system snapshot shared by all assessments (processes, services, tasks, registry paths, shortcuts)
+$script:SafetyFilter = 0       # 0 all, 1..5 class, 6 not assessed
+$script:SafetyClasses = @('Very likely safe', 'Likely safe', 'Uncertain', 'High risk', 'Unsafe')
+
+function Get-SafetyClass([int]$s) { if ($s -ge 95) { 'Very likely safe' } elseif ($s -ge 85) { 'Likely safe' } elseif ($s -ge 65) { 'Uncertain' } elseif ($s -ge 35) { 'High risk' } else { 'Unsafe' } }
+function Get-ConfClass([int]$c) { if ($c -ge 90) { 'Strong evidence' } elseif ($c -ge 75) { 'Good evidence' } elseif ($c -ge 50) { 'Limited evidence' } else { 'Insufficient evidence' } }
+
+function Add-Ev($ev, [string]$cat, [string]$src, [string]$finding, [string]$result, [double]$rel, [string]$impact, [string]$expl) {
+    [void]$ev.Add([pscustomobject]@{ Id = ('EV-{0:D3}' -f ($ev.Count + 1)); Category = $cat; Source = $src; Finding = $finding; Result = $result; Time = (Get-Date).ToString('s'); Reliability = $rel; Impact = $impact; Explanation = $expl })
+}
+
+# ---- path helpers
+$script:NormMemo = @{}; $script:BadPathChars = [IO.Path]::GetInvalidPathChars()
+function Get-NormPath([string]$p) {   # normalised, lower-case path; remembered, because the same install locations are looked up for every copy of every set
+    if (-not $p) { return '' }
+    $r = $script:NormMemo[$p]; if ($null -ne $r) { return $r }
+    $q = $p
+    if ($q.IndexOfAny($script:BadPathChars) -ge 0) { $q = $q.Trim('"', "'"); foreach ($c in $script:BadPathChars) { $q = $q.Replace([string]$c, '') } }   # e.g. a quoted registry value: clean it instead of letting GetFullPath throw
+    try { $q = [IO.Path]::GetFullPath($q) } catch { Write-ErrLog $_ }
+    $r = $q.TrimEnd('\').ToLowerInvariant()
+    if ($script:NormMemo.Count -gt 40000) { $script:NormMemo.Clear() }
+    $script:NormMemo[$p] = $r; $r
+}
+function Test-PathInside([string]$child, [string]$parent) {   # both normalised: child equals or is inside parent
+    if (-not $child -or -not $parent) { return $false }
+    $child -eq $parent -or $child.StartsWith($parent + '\', [StringComparison]::Ordinal)
+}
+function Find-PathRef([string]$text, [string]$folder) {   # 'direct' when the text names the folder or something inside it, 'parent' when it names a folder above it, else ''
+    if (-not $text -or -not $folder) { return '' }
+    $t = $text.ToLowerInvariant().Replace('"', ' ').Replace('/', '\')
+    $i = $t.IndexOf($folder, [StringComparison]::Ordinal)
+    while ($i -ge 0) {
+        $end = $i + $folder.Length
+        if ($end -ge $t.Length -or $t[$end] -eq '\' -or $t[$end] -eq ' ' -or $t[$end] -eq ';' -or $t[$end] -eq ',') { return 'direct' }
+        $i = $t.IndexOf($folder, $i + 1, [StringComparison]::Ordinal)
+    }
+    ''
+}
+function Get-ExeDir([string]$text) {   # folder of the program named at the start of a path or command line (lower case), or ''
+    if (-not $text) { return '' }
+    $m = [regex]::Match($text, '^\s*"?([A-Za-z]:\\[^"]*?\.(exe|dll|sys|bat|cmd))', 'IgnoreCase'); if (-not $m.Success) { return '' }
+    try { Get-NormPath ([IO.Path]::GetDirectoryName($m.Groups[1].Value)) } catch { '' }
+}
+
+# ---- one snapshot of the machine, reused by every assessment for a few minutes (read-only queries only)
+function Read-RegPaths($hive, [string]$sub, [string]$kind, [int]$depth, $out) {
+    try {
+        $k = $hive.OpenSubKey($sub); if (-not $k) { return }
+        try {
+            foreach ($n in $k.GetValueNames()) { $v = $k.GetValue($n); if ($v -is [string] -and $v.Length -gt 3 -and $v -match '[A-Za-z]:\\') { [void]$out.Add([pscustomobject]@{ Kind = $kind; Key = ($hive.Name + '\' + $sub); Name = $n; Value = $v; App = '' }) } }
+            if ($depth -gt 0) {
+                foreach ($sk in $k.GetSubKeyNames()) {
+                    $c = $null; try { $c = $k.OpenSubKey($sk) } catch { Write-ErrLog $_ }
+                    if (-not $c) { continue }
+                    try {
+                        $app = [string]$c.GetValue('DisplayName')
+                        foreach ($n in $c.GetValueNames()) { $v = $c.GetValue($n); if ($v -is [string] -and $v.Length -gt 3 -and $v -match '[A-Za-z]:\\') { [void]$out.Add([pscustomobject]@{ Kind = $kind; Key = ($hive.Name + '\' + $sub + '\' + $sk); Name = $(if ($n) { $n } else { '(Default)' }); Value = $v; App = $app }) } }
+                    } finally { $c.Close() }
+                }
+            }
+        } finally { $k.Close() }
+    } catch { Write-ErrLog $_ }
+}
+function Get-SafetyContext([switch]$Force) {
+    $ctx = $script:SafetyCtx
+    if (-not $Force -and $ctx -and ((Get-Date) - $ctx.Time).TotalMinutes -lt 5) { return $ctx }
+    $ctx = @{ Time = Get-Date; Proc = @(); Svc = @(); Tasks = @(); Reg = @(); Links = @(); Fail = @{}; Apps = @() }
+    try { $ctx.Proc = @(Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ Id = $_.ProcessId; Name = [string]$_.Name; Exe = [string]$_.ExecutablePath; Cmd = [string]$_.CommandLine } }) } catch { $ctx.Fail['Process'] = $_.Exception.Message }
+    try { $ctx.Svc = @(Get-CimInstance Win32_Service -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ Name = [string]$_.Name; Path = [string]$_.PathName; State = [string]$_.State } }) } catch { $ctx.Fail['Service'] = $_.Exception.Message }
+    try { $ctx.Tasks = @(Get-ScheduledTask -ErrorAction Stop | ForEach-Object { $tn = $_.TaskName; foreach ($a in $_.Actions) { [pscustomobject]@{ Name = $tn; Text = ([string]$a.Execute + ' ' + [string]$a.Arguments + ' ' + [string]$a.WorkingDirectory) } } }) } catch { $ctx.Fail['Tasks'] = $_.Exception.Message }
+    $reg = New-Object System.Collections.ArrayList
+    try {
+        $lm = [Microsoft.Win32.Registry]::LocalMachine; $cu = [Microsoft.Win32.Registry]::CurrentUser
+        foreach ($h in $lm, $cu) { Read-RegPaths $h 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' 'uninstall' 1 $reg }
+        Read-RegPaths $lm 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall' 'uninstall' 1 $reg
+        foreach ($h in $lm, $cu) { foreach ($s in 'Run', 'RunOnce') { Read-RegPaths $h ('SOFTWARE\Microsoft\Windows\CurrentVersion\' + $s) 'startup' 0 $reg } }
+        Read-RegPaths $lm 'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths' 'apppath' 1 $reg
+        Read-RegPaths $cu 'Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders' 'shell' 0 $reg
+        Read-RegPaths $lm 'SYSTEM\CurrentControlSet\Services' 'service' 1 $reg
+    } catch { $ctx.Fail['Registry'] = $_.Exception.Message }
+    $ctx.Reg = @($reg)
+    $apps = @{}; foreach ($r in $ctx.Reg) { if ($r.Kind -eq 'uninstall' -and $r.App -and $r.Name -eq 'InstallLocation') { $apps[$r.Value] = $r.App } }; $ctx.Apps = $apps
+    $lnk = New-Object System.Collections.ArrayList
+    try {
+        $ws = New-Object -ComObject WScript.Shell; $n = 0
+        $dirs = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory'), [Environment]::GetFolderPath('StartMenu'), [Environment]::GetFolderPath('CommonStartMenu'), [Environment]::GetFolderPath('Startup'))
+        foreach ($dd in $dirs) {
+            if (-not $dd -or -not [IO.Directory]::Exists($dd)) { continue }
+            foreach ($f in [IO.Directory]::EnumerateFiles($dd, '*.lnk', [IO.SearchOption]::AllDirectories)) {
+                if (++$n -gt 3000) { break }
+                try { $s = $ws.CreateShortcut($f); [void]$lnk.Add([pscustomobject]@{ File = $f; Target = [string]$s.TargetPath; Dir = [string]$s.WorkingDirectory }) } catch { Write-ErrLog $_ }
+            }
+        }
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($ws)
+    } catch { $ctx.Fail['Shortcuts'] = $_.Exception.Message }
+    $ctx.Links = @($lnk)
+    # search index: every text a folder path could be named in, normalised once; an assessment only runs the exact matching when its path occurs in the index
+    try {
+        $bb = New-Object Text.StringBuilder
+        foreach ($p in $ctx.Proc) { [void]$bb.Append($p.Exe).Append(' ').Append($p.Cmd).Append("`n") }
+        foreach ($s in $ctx.Svc) { [void]$bb.Append($s.Path).Append("`n") }
+        foreach ($tk in $ctx.Tasks) { [void]$bb.Append($tk.Text).Append("`n") }
+        foreach ($r in $ctx.Reg) { [void]$bb.Append($r.Value).Append("`n") }
+        foreach ($l in $ctx.Links) { [void]$bb.Append($l.Target).Append(' ').Append($l.Dir).Append("`n") }
+        $ctx.Blob = $bb.ToString().ToLowerInvariant().Replace('"', ' ').Replace('/', '\')
+        $ed = @{}
+        foreach ($p in $ctx.Proc) { $d = Get-ExeDir $p.Exe; if ($d.Length -gt 8 -and ($d.Split('\').Count -ge 3)) { if (-not $ed.ContainsKey($d)) { $ed[$d] = New-Object System.Collections.ArrayList }; [void]$ed[$d].Add("process $($p.Name)") } }
+        foreach ($s in $ctx.Svc) { $d = Get-ExeDir $s.Path; if ($d.Length -gt 8 -and ($d.Split('\').Count -ge 3)) { if (-not $ed.ContainsKey($d)) { $ed[$d] = New-Object System.Collections.ArrayList }; [void]$ed[$d].Add("service $($s.Name)") } }
+        $ctx.ExeDirs = $ed
+    } catch { Write-ErrLog $_; $ctx.Blob = $null; $ctx.ExeDirs = $null }
+    $script:SafetyCtx = $ctx
+    $ctx
+}
+
+# ---- facts about one folder (bounded walk, never follows links, never writes)
+$script:FactsMemo = @{}; $script:CfgMemo = @{}
+function Get-FolderFacts([string]$path, [int]$cap = 3000) {   # remembered for two minutes: one set is assessed several times (every keeper choice) and the folder does not change meanwhile
+    $m = $script:FactsMemo[$path]; if ($m -and ((Get-Date) - $m.T).TotalSeconds -lt 120) { return $m.F }
+    $f = Get-FolderFactsRaw $path $cap; $script:FactsMemo[$path] = [pscustomobject]@{ T = (Get-Date); F = $f }; $f
+}
+function Get-FolderFactsRaw([string]$path, [int]$cap = 3000) {
+    $f = @{ Files = 0; Dirs = 0; Bytes = 0L; Reparse = 0; Hard = 0; HardBytes = 0L; Hidden = 0; Exts = @{}; Root = (New-Object System.Collections.ArrayList); Sample = (New-Object System.Collections.ArrayList); Newest = [datetime]::MinValue; Capped = $false; RootReparse = $false; Error = '' }
+    try {
+        $di = New-Object IO.DirectoryInfo($path)
+        if (-not $di.Exists) { $f.Error = 'folder not found'; return $f }
+        if ($di.Attributes -band [IO.FileAttributes]::ReparsePoint) { $f.RootReparse = $true; return $f }
+        $stack = New-Object 'System.Collections.Generic.Stack[IO.DirectoryInfo]'; $stack.Push($di); $seen = 0; $hc = 0
+        while ($stack.Count -gt 0 -and -not $f.Capped) {
+            $d = $stack.Pop(); $atRoot = ($d.FullName.TrimEnd('\') -eq $di.FullName.TrimEnd('\'))
+            $entries = $null; try { $entries = $d.GetFileSystemInfos() } catch { $f.Error = 'some folders could not be read'; continue }
+            foreach ($x in $entries) {
+                if (++$seen -gt $cap) { $f.Capped = $true; break }
+                if ($x.Attributes -band [IO.FileAttributes]::ReparsePoint) { $f.Reparse++; continue }
+                if ($x -is [IO.DirectoryInfo]) { $f.Dirs++; if ($atRoot) { [void]$f.Root.Add($x.Name) }; $stack.Push($x); continue }
+                $f.Files++; $f.Bytes += $x.Length; if ($x.LastWriteTime -gt $f.Newest) { $f.Newest = $x.LastWriteTime }
+                if ($atRoot) { [void]$f.Root.Add($x.Name) }
+                if ($x.Attributes -band [IO.FileAttributes]::Hidden) { $f.Hidden++ }
+                $e = $x.Extension.ToLowerInvariant(); if ($f.Exts.ContainsKey($e)) { $f.Exts[$e]++ } else { $f.Exts[$e] = 1 }
+                if ($f.Sample.Count -lt 40) { [void]$f.Sample.Add($x.FullName) }
+                if ($hc -lt 200) { $hc++; try { $l = [FileId]::Links($x.FullName); if ($l -gt 1) { $f.Hard++; $f.HardBytes += $x.Length } } catch { Write-ErrLog $_ } }
+            }
+        }
+    } catch { $f.Error = $_.Exception.Message }
+    $f
+}
+
+function Get-KnownRoots {
+    $r = @{}
+    $r.Win = Get-NormPath $env:windir
+    $r.Prog = @(@($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramW6432) | Where-Object { $_ } | ForEach-Object { Get-NormPath $_ } | Select-Object -Unique)
+    $r.Store = Get-NormPath (Join-Path $env:ProgramFiles 'WindowsApps')
+    $r.AppData = @(@($env:LOCALAPPDATA, $env:APPDATA, $env:ProgramData, (Join-Path $env:USERPROFILE 'AppData\LocalLow')) | Where-Object { $_ } | ForEach-Object { Get-NormPath $_ })
+    $prof = Get-NormPath $env:USERPROFILE
+    $r.User = @('Documents', 'Desktop', 'Pictures', 'Videos', 'Music', 'Downloads') | ForEach-Object { $prof + '\' + $_.ToLowerInvariant() }
+    $r.Cloud = @(@($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial, (Join-Path $env:USERPROFILE 'Dropbox'), (Join-Path $env:USERPROFILE 'Google Drive'), (Join-Path $env:USERPROFILE 'iCloudDrive'), (Join-Path $env:USERPROFILE 'MEGAsync'), (Join-Path $env:USERPROFILE 'Documents\MEGAsync'), (Join-Path $env:USERPROFILE 'MEGA'), (Join-Path $env:USERPROFILE 'Documents\Dropbox'), (Join-Path $env:USERPROFILE 'Documents\Google Drive')) | Where-Object { $_ } | ForEach-Object { Get-NormPath $_ })
+    $r
+}
+
+# ---- the assessment of ONE candidate folder inside its duplicate set
+function Get-SetSig($set) { (($set.Items | ForEach-Object { if ($_.Remove) { '1' } else { '0' } }) -join '') }   # which copies are marked: an assessment is only valid for the marks it was made with
+function Get-CachedSafety($it, $set) { $a = $script:SafetyCache[(Get-NormPath $it.Path)]; if ($a -and $a.Sig -eq (Get-SetSig $set)) { $a } else { $null } }
+function Get-SafetyAssessment($it, $set, [switch]$Force) {
+    $key = Get-NormPath $it.Path; $sig = Get-SetSig $set
+    if (-not $Force -and $script:SafetyCache.ContainsKey($key) -and $script:SafetyCache[$key].Sig -eq $sig) { return $script:SafetyCache[$key] }
+    $ctx = Get-SafetyContext; $roots = Get-KnownRoots; $ev = New-Object System.Collections.ArrayList
+    $path = $it.Path; $np = $key; $facts = Get-FolderFacts $path
+    $dim = [ordered]@{}; $caps = New-Object System.Collections.ArrayList; $risks = New-Object System.Collections.ArrayList
+    $relp = $np; $unknown = 0; $owner = ''; $ownerClass = 'Unknown'; $isApp = $false; $activeDep = $false
+    $cap = { param($v, $why) [void]$caps.Add([pscustomobject]@{ Max = $v; Rule = $why }) }
+
+    # ---------- 1 running programs and services
+    $hits = New-Object System.Collections.ArrayList; $par = New-Object System.Collections.ArrayList
+    $refPossible = ($null -eq $ctx.Blob) -or ($ctx.Blob.IndexOf($np, [StringComparison]::Ordinal) -ge 0)   # fast path: nothing anywhere names this folder
+    if ($refPossible) {
+        foreach ($p in $ctx.Proc) { $r = Find-PathRef ($p.Exe + ' ' + $p.Cmd) $np; if ($r -eq 'direct') { [void]$hits.Add("process $($p.Name) (PID $($p.Id))") } else { $ed = Get-ExeDir $p.Exe; if ($ed.Length -gt 8 -and ($ed.Split('\').Count -ge 3) -and (Test-PathInside $np $ed)) { [void]$par.Add("process $($p.Name)") } } }
+        foreach ($s in $ctx.Svc) { $r = Find-PathRef $s.Path $np; if ($r -eq 'direct') { [void]$hits.Add("service $($s.Name)") } else { $ed = Get-ExeDir $s.Path; if ($ed.Length -gt 8 -and ($ed.Split('\').Count -ge 3) -and (Test-PathInside $np $ed)) { [void]$par.Add("service $($s.Name)") } } }
+        foreach ($t in $ctx.Tasks) { $r = Find-PathRef $t.Text $np; if ($r -eq 'direct') { [void]$hits.Add("scheduled task $($t.Name)") } }
+    }
+    else {
+        $anc = $np; while ($anc.Length -gt 8) { $lst = $ctx.ExeDirs[$anc]; if ($lst) { foreach ($nm in $lst) { [void]$par.Add($nm) } }; $ix = $anc.LastIndexOf('\'); if ($ix -lt 1) { break }; $anc = $anc.Substring(0, $ix) }
+    }
+    $locked = New-Object System.Collections.ArrayList
+    foreach ($sf in $facts.Sample) {
+        try { $fs = [IO.File]::Open($sf, 'Open', 'Read', 'None'); $fs.Dispose() } catch [System.IO.IOException] { if (($_.Exception.HResult -band 0xFFFF) -in @(32, 33)) { [void]$locked.Add($sf) } } catch { Write-ErrLog $_ }
+        if ($locked.Count -ge 3) { break }
+    }
+    $rt = 95
+    if ($ctx.Fail.ContainsKey('Process')) { Add-Ev $ev 'Runtime' 'Win32_Process' 'Process list could not be read' 'Unknown' 0 'lowers confidence' "The list of running programs was not available ($($ctx.Fail['Process'])), so a running program using this folder cannot be ruled out."; $rt = [math]::Min($rt, 50); $unknown++ }
+    elseif ($hits.Count -eq 0 -and $par.Count -eq 0) { Add-Ev $ev 'Runtime' 'Running processes, services, scheduled tasks' 'No program, service or task refers to this folder' 'Negative' 0.85 'raises safety' 'None of the running programs, Windows services or scheduled tasks names this folder in its path or command line. This does not prove it is unused: a program may use it without naming it, or need it when it starts again.' }
+    if ($hits.Count -gt 0) { Add-Ev $ev 'Runtime' 'Running processes, services, scheduled tasks' ('Referenced by ' + (($hits | Select-Object -First 4) -join ', ')) 'Positive' 0.95 'blocks deletion' ('Active dependency: ' + (($hits | Select-Object -First 4) -join ', ') + ' uses this folder.'); $rt = 0; $activeDep = $true }
+    elseif ($par.Count -gt 0) { Add-Ev $ev 'Runtime' 'Running processes, services' ('A program in a parent folder is running: ' + (($par | Select-Object -First 3) -join ', ')) 'Positive' 0.6 'lowers safety' 'A running program or service is installed in a folder above this one, so this folder may belong to it (indirect association).'; $rt = [math]::Min($rt, 40) }
+    if ($locked.Count -gt 0) { Add-Ev $ev 'Runtime' 'Exclusive-open test on sample files' ("$($locked.Count) file(s) are open in another program, e.g. " + [IO.Path]::GetFileName($locked[0])) 'Positive' 0.95 'blocks deletion' 'Files in this folder are open in another program right now.'; $rt = 0; $activeDep = $true }
+    else { Add-Ev $ev 'Runtime' 'Exclusive-open test on sample files' "Up to $($facts.Sample.Count) sample files could be opened exclusively (none is locked)" 'Negative' 0.7 'raises safety' 'No sampled file is held open by another program.' }
+    Add-Ev $ev 'Runtime' 'Open file handles' 'Open file handles of other programs cannot be listed without extra tools' 'Unknown' 0 'lowers confidence' 'Windows does not let this app list every open handle, so only the sample test above shows whether files are in use.'; $unknown++
+    $dim.Runtime = $rt
+    if ($activeDep) { & $cap 10 'Confirmed active dependency (program, service, task or open file)' }
+
+    # ---------- 2 application ownership
+    $own = 85; $ownDetail = ''
+    if (Test-PathInside $np $roots.Win) { $isApp = $true; $own = 0; $owner = 'Windows'; $ownerClass = 'Confirmed'; $ownDetail = 'Inside the Windows folder'; & $cap 2 'Protected Windows directory' }
+    elseif (Test-PathInside $np $roots.Store) { $isApp = $true; $own = 3; $owner = 'Microsoft Store app'; $ownerClass = 'Confirmed'; $ownDetail = 'Inside the WindowsApps package directory'; & $cap 5 'Application package or installation folder' }
+    else {
+        foreach ($pr in $roots.Prog) { if (Test-PathInside $np $pr) { $isApp = $true; $own = 5; $owner = 'Installed program'; $ownerClass = 'Confirmed'; $ownDetail = 'Inside a Program Files folder'; & $cap 5 'Application package or installation folder' } }
+    }
+    if (-not $isApp) {
+        foreach ($loc in $ctx.Apps.Keys) {
+            $nl = Get-NormPath $loc; if (-not $nl -or $nl.Length -lt 6) { continue }
+            if ((Test-PathInside $np $nl) -or (Test-PathInside $nl $np)) { $isApp = $true; $own = 5; $owner = [string]$ctx.Apps[$loc]; $ownerClass = 'Confirmed'; $ownDetail = "Registered install location of $owner"; & $cap 5 'Application package or installation folder'; break }
+        }
+    }
+    if (-not $isApp) {
+        $ad = $null; foreach ($r2 in $roots.AppData) { if (Test-PathInside $np $r2) { $ad = $r2 } }; if ($ad) { $relp = $np.Substring($ad.Length) }
+        if ($ad) {
+            $rest = $np.Substring($ad.Length).TrimStart('\').Split('\'); $owner = (($rest | Select-Object -First 2) -join '\'); $ownerClass = 'Probable'; $own = 20
+            $ownDetail = "Inside the application data folder, under '$owner'"
+            if ($np -match '\\(extensions?|profiles?|user data)\\') { $own = 10; $ownDetail += ' (browser or application profile / extension storage)' }
+        }
+    }
+    if (-not $isApp -and $ownerClass -eq 'Unknown') {
+        $marker = $null
+        foreach ($n in $facts.Root) { if ($n -in @('manifest.json', 'AppxManifest.xml', 'package.json', '.git', 'pom.xml', 'Cargo.toml', '.csproj') -or $n -match '\.(exe|dll|sln|csproj)$') { $marker = $n; break } }
+        if ($marker) { $ownerClass = 'Probable'; $owner = 'application or project'; $own = 25; $ownDetail = "Contains '$marker', which marks an application or project" }
+    }
+    if ($ownerClass -eq 'Unknown') {
+        $inUser = $false; foreach ($u in $roots.User) { if (Test-PathInside $np $u) { $inUser = $true } }
+        if ($inUser) { $ownerClass = 'Personal'; $owner = 'you (personal files)'; $own = 100; $ownDetail = "In your own documents/media folders, with no program, project or install record attached - personal files, not a program or system folder" } else { $own = 70; $ownDetail = 'No application owner could be identified for this location' }
+    }
+    $ownRes = $(if ($ownerClass -eq 'Unknown') { 'Unknown' } else { 'Positive' })
+    Add-Ev $ev 'Ownership' 'Location, install records, folder markers' ("$ownDetail. Ownership: $ownerClass" + $(if ($owner) { " ($owner)" } else { '' })) $ownRes $(if ($ownerClass -eq 'Confirmed') { 0.9 } elseif ($ownerClass -eq 'Probable') { 0.6 } elseif ($ownerClass -eq 'Personal') { 0.8 } else { 0.35 }) $(if ($own -le 25) { 'lowers safety' } else { 'raises safety' }) $(if ($ownerClass -eq 'Unknown') { 'The owner of this folder could not be established from its location, the install records or its contents.' } else { "$ownDetail." })
+    if ($ownerClass -eq 'Unknown') { $unknown++ }
+    $dim.Ownership = $own
+
+    # ---------- 3 configuration, registry and shortcut references
+    $cfg = 95; $active = New-Object System.Collections.ArrayList; $hist = New-Object System.Collections.ArrayList
+    if ($refPossible) { foreach ($r in $ctx.Reg) {
+        $m = Find-PathRef $r.Value $np
+        if ($m -eq 'direct') { $d = "$($r.Key)\$($r.Name)"; if ($r.Name -eq 'InstallSource') { [void]$hist.Add($d) } else { [void]$active.Add($d) } }
+    }
+    foreach ($l in $ctx.Links) {
+        $m = Find-PathRef ($l.Target + ' ' + $l.Dir) $np
+        if ($m -eq 'direct') { [void]$active.Add('shortcut ' + [IO.Path]::GetFileName($l.File)) }
+    } }
+    $cf = New-Object System.Collections.ArrayList
+    $parent = [IO.Path]::GetDirectoryName($path.TrimEnd('\'))
+    if ($parent -and $parent.Length -gt 3 -and [IO.Directory]::Exists($parent)) {
+        $pk = Get-NormPath $parent; $ce = $script:CfgMemo[$pk]
+        if (-not $ce -or ((Get-Date) - $ce.T).TotalSeconds -gt 120) {   # the config files of a parent folder are read once and kept for two minutes
+            $lst = New-Object System.Collections.ArrayList; $n = 0
+            try {
+                foreach ($f in [IO.Directory]::EnumerateFiles($parent)) {
+                    if ($f -notmatch '\.(json|xml|ini|ya?ml|config|cfg|cmd|bat|ps1|toml|conf)$') { continue }
+                    if (++$n -gt 150) { break }
+                    $fi = New-Object IO.FileInfo($f); if ($fi.Length -gt 262144) { continue }
+                    $txt = [IO.File]::ReadAllText($f); [void]$lst.Add([pscustomobject]@{ F = $f; T = $txt.ToLowerInvariant().Replace('"', ' ').Replace('/', '\') })
+                }
+            } catch { Write-ErrLog $_ }
+            if ($script:CfgMemo.Count -gt 60) { $script:CfgMemo = @{} }
+            $ce = [pscustomobject]@{ T = (Get-Date); L = $lst }; $script:CfgMemo[$pk] = $ce
+        }
+        foreach ($e5 in $ce.L) { if ($e5.T.IndexOf($np, [StringComparison]::Ordinal) -ge 0 -and (Find-PathRef $e5.T $np) -eq 'direct') { [void]$cf.Add($e5.F) } }
+    }
+    if ($ctx.Fail.ContainsKey('Registry')) { Add-Ev $ev 'Registry' 'Registry' 'The registry could not be read' 'Unknown' 0 'lowers confidence' "Registry access failed ($($ctx.Fail['Registry']))."; $cfg = [math]::Min($cfg, 50); $unknown++ }
+    if ($active.Count -gt 0) { Add-Ev $ev 'Registry' 'Registry and shortcuts (read-only)' ('Active reference: ' + (($active | Select-Object -First 3) -join '; ')) 'Positive' 0.9 'blocks deletion' 'Windows registers or launches something from this folder (install record, startup entry, App Paths, shell folder, service or shortcut).'; $cfg = 10; $activeDep = $true; & $cap 10 'Confirmed active dependency (registry, startup entry or shortcut)' }
+    if ($hist.Count -gt 0) { Add-Ev $ev 'Registry' 'Registry (read-only)' ('Historical reference: ' + (($hist | Select-Object -First 2) -join '; ')) 'Positive' 0.6 'lowers safety' 'An installer cache path points here. Such references are usually historical but are kept as a warning.'; $cfg = [math]::Min($cfg, 55) }
+    if ($cf.Count -gt 0) { Add-Ev $ev 'Configuration' 'Config files next to the folder' ('Named in ' + (($cf | Select-Object -First 2 | ForEach-Object { [IO.Path]::GetFileName($_) }) -join ', ')) 'Positive' 0.6 'lowers safety' 'A configuration file in the parent folder contains this folder path. It cannot be told whether the reference is still used.'; $cfg = [math]::Min($cfg, 30) }
+    if ($active.Count -eq 0 -and $hist.Count -eq 0 -and $cf.Count -eq 0 -and -not $ctx.Fail.ContainsKey('Registry')) { Add-Ev $ev 'Registry' 'Install records, Run keys, App Paths, shell folders, service images, Start Menu, Desktop and Startup shortcuts, nearby config files' 'No reference found to this folder' 'Negative' 0.85 'raises safety' 'None of the investigated registry locations, shortcuts or nearby configuration files point to this folder.' }
+    Add-Ev $ev 'Registry' 'Not inspected in this version' 'App package registrations, file associations and application databases are not searched' 'Unknown' 0 'lowers confidence' 'These sources are not covered, so a reference there would not be seen.'; $unknown++
+    $dim.Config = $cfg
+
+    # ---------- 4 data type and reconstructibility
+    $total = [math]::Max(1, $facts.Files); $docExt = @('.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pdf', '.txt', '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.raw', '.cr2', '.nef', '.mp3', '.mp4', '.mov', '.avi', '.mkv', '.zip', '.7z', '.rar', '.odt', '.psd', '.csv', '.md')
+    $dbExt = @('.db', '.sqlite', '.sqlite3', '.mdb', '.accdb', '.ldb', '.mdf', '.ndf', '.ibd', '.kdbx'); $docN = 0; $dbN = 0
+    foreach ($k2 in $facts.Exts.Keys) { if ($docExt -contains $k2) { $docN += $facts.Exts[$k2] }; if ($dbExt -contains $k2) { $dbN += $facts.Exts[$k2] } }
+    $stateNames = @('Local State', 'Preferences', 'Cookies', 'Login Data', 'ntuser.dat', 'Web Data', 'History'); $hasState = $false; foreach ($n in $facts.Root) { if ($stateNames -contains $n) { $hasState = $true } }
+    $cacheSeg = ($relp -match '\\(cache|code cache|gpucache|shadercache|inetcache|temp|tmp|crashpad|crash reports)(\\|$)')
+    $verified = $false; $keptOthers = @($set.Items | Where-Object { $_ -ne $it -and -not $_.Remove -and [IO.Directory]::Exists($_.Path) })
+    if ($keptOthers.Count -gt 0) { $verified = $true }
+    $cls = ''; $dat = 55
+    if ($dbN -gt 0 -or $hasState) { $cls = 'application state or database'; $dat = 5; & $cap 10 'Required database or application state' }
+    elseif ($cacheSeg -and ($ownerClass -in @('Confirmed', 'Probable'))) { $cls = "rebuildable cache of $owner"; $dat = 88 }
+    elseif ($cacheSeg) { $cls = 'named like a cache/temp folder but no owning application was found'; $dat = 50 }
+    elseif ($facts.Files -gt 0 -and ($docN / $total) -ge 0.6) {
+        $cls = 'user-generated documents or media'
+        if ($verified) { $dat = $(if ($ownerClass -eq 'Personal') { 100 } else { 65 }) } else { $dat = 25; & $cap 20 'Unique user data without a verified backup' }
+        $codeExt = @('.ps1', '.psm1', '.py', '.js', '.ts', '.cs', '.java', '.cpp', '.c', '.h', '.json', '.xml', '.ini', '.cfg', '.conf', '.yml', '.yaml', '.bat', '.cmd', '.sh', '.sql', '.html', '.css', '.exe', '.dll', '.reg', '.lnk'); $codeN = 0
+        foreach ($k5 in $facts.Exts.Keys) { if ($codeExt -contains $k5) { $codeN += $facts.Exts[$k5] } }
+        if ($codeN -gt 0 -and ($codeN / $total) -ge 0.1) { $dat = [math]::Min($dat, 70); $cls += ' (with scripts, settings or program files)' }
+    }
+    elseif ($relp -match '\\(backup|backups|old|archive)(\\|$)') { $cls = 'backup or archive data'; $dat = 50 }
+    elseif ($relp -match '\\(installer|installers|update|updates|setup|downloads)(\\|$)' -or ($facts.Exts.ContainsKey('.msi') -or $facts.Exts.ContainsKey('.cab'))) { $cls = 'installer or update package'; $dat = 60 }
+    else { $cls = 'unclassified data'; $dat = 55 }
+    $datRes = $(if ($cls -like 'unclassified*' -or $cls -like 'named like*') { 'Unknown' } else { 'Positive' })
+    if ($datRes -eq 'Unknown') { $unknown++ }
+    Add-Ev $ev 'Data' 'Folder contents and location' ("Looks like: $cls ($($facts.Files) files, $($facts.Dirs) folders)") $datRes $(if ($datRes -eq 'Unknown') { 0.3 } else { 0.7 }) $(if ($dat -ge 80) { 'raises safety' } else { 'lowers safety' }) $(if ($cls -like 'user-generated*') { "Most files are documents or media, which cannot be rebuilt$(if ($verified) { '; an identical kept copy exists, so the content itself is not unique' } else { ' and no other kept copy exists' })." } elseif ($cls -like 'application state*') { 'It holds databases or application settings, which an application needs and cannot recreate.' } elseif ($cls -like 'rebuildable*') { "It is a cache of $owner, which the application normally rebuilds. Confirm that application does so before cleaning." } elseif ($datRes -eq 'Unknown') { 'The kind of data could not be established; the folder name alone is not enough to call it safe.' } else { "Classified as $cls." })
+    if ($facts.Capped) { Add-Ev $ev 'Data' 'Folder walk' 'Folder is large: only the first 3000 entries were examined' 'Unknown' 0 'lowers confidence' 'The classification is based on a sample of the folder.'; $unknown++ }
+    if ($cls -like 'rebuildable*') { $own = [math]::Max($own, 60); $dim.Ownership = $own }
+    $dim.Data = $dat
+
+    # ---------- 5 duplicate equivalence and replacement
+    $dup = 95
+    $ownersDiffer = ''
+    foreach ($o2 in $set.Items) {
+        if ($o2 -eq $it) { continue }
+        $n2 = Get-NormPath $o2.Path; $ow2 = ''
+        foreach ($r2 in $roots.AppData) { if (Test-PathInside $n2 $r2) { $ow2 = (($n2.Substring($r2.Length).TrimStart('\').Split('\') | Select-Object -First 2) -join '\') } }
+        if ($ow2 -and $owner -and $ownerClass -ne 'Unknown' -and $ow2 -ne $owner) { $ownersDiffer = $ow2 }
+    }
+    if ($keptOthers.Count -eq 0) { $dup = 10; Add-Ev $ev 'Duplicate' 'Duplicate set' 'No other copy would remain' 'Positive' 0.95 'blocks deletion' 'Every other copy is also marked for removal or missing, so deleting this one could leave no copy at all.'; & $cap 10 'Would remove the last remaining copy' }
+    else {
+        $k0 = $keptOthers[0]; $kn = Get-NormPath $k0.Path
+        if ((Test-PathInside $kn $np) -or (Test-PathInside $np $kn)) { $dup = 30; Add-Ev $ev 'Duplicate' 'Folder layout' 'The kept copy and this folder are nested inside each other' 'Positive' 0.9 'lowers safety' 'One folder contains the other, so removing one removes part of the other.' }
+        else {
+            $kf = Get-FolderFacts $k0.Path
+            if ($kf.RootReparse) { $dup = 20; Add-Ev $ev 'Duplicate' 'Kept copy' 'The kept copy is a link to another place' 'Positive' 0.9 'lowers safety' 'The copy that would remain is a junction or symbolic link, not an independent copy.' }
+            elseif (-not $facts.Capped -and -not $kf.Capped -and ($kf.Files -ne $facts.Files -or $kf.Dirs -ne $facts.Dirs)) { $dup = 20; Add-Ev $ev 'Duplicate' 'Structural re-check' "Kept copy has $($kf.Files) files / $($kf.Dirs) folders, this folder $($facts.Files) / $($facts.Dirs)" 'Positive' 0.9 'lowers safety' 'The two folders no longer match the scan result (contents changed after the scan). Scan again before deleting.' }
+            else {
+                $sameDrive = ([IO.Path]::GetPathRoot($k0.Path) -eq [IO.Path]::GetPathRoot($path)); $dup = $(if ($sameDrive) { 72 } else { 95 })   # a copy on another drive survives a disk failure; one on the same drive does not
+                $kCloud = $false; foreach ($c4 in $roots.Cloud) { if (Test-PathInside $kn $c4) { $kCloud = $true } }
+                if ($kCloud -and $dup -gt 85) { $dup = 85 }   # the kept copy is a cloud-sync folder: a delete elsewhere can be mirrored onto it
+                Add-Ev $ev 'Duplicate' 'Where the kept copy lives' $(if ($sameDrive) { 'Kept copy is on the same drive, so one disk failure would lose both' } elseif ($kCloud) { 'Kept copy is on another drive but inside a cloud-sync folder' } else { 'Kept copy is on a different drive, so it survives a failure of this one' }) $(if ($sameDrive -or $kCloud) { 'Positive' } else { 'Negative' }) 0.85 $(if ($sameDrive -or $kCloud) { 'lowers safety' } else { 'raises safety' }) $(if ($sameDrive) { 'Both copies share one physical drive; a failed drive, a mistake in a sync tool or ransomware can hit both at once.' } else { 'The remaining copy is stored apart from this one.' })
+                Add-Ev $ev 'Duplicate' 'Scan result (SHA-256) and structure re-check' ("Identical to $($keptOthers.Count) kept cop$(if ($keptOthers.Count -eq 1) { 'y' } else { 'ies' }), e.g. $($k0.Path)") 'Negative' 0.9 'raises safety' 'The scanner found identical contents by SHA-256 and the file and folder counts still match, so no unique files were found here. Identical content does not mean the copies serve the same purpose.'
+            }
+        }
+    }
+    if ($ownersDiffer) { $dup = [math]::Min($dup, 10); Add-Ev $ev 'Duplicate' 'Ownership of the other copies' "Another copy belongs to a different application ($ownersDiffer)" 'Positive' 0.7 'blocks deletion' "Another copy sits in the data of '$ownersDiffer', not of '$owner'. Identical contents do not make them interchangeable: each application may need its own copy."; & $cap 25 'Independently owned copy (another application keeps its own)' }
+    $dim.Duplicate = $dup
+
+    # ---------- 6 version and lifecycle
+    $leaf = [IO.Path]::GetFileName($path.TrimEnd('\')); $life = 95
+    $ver = [regex]::Match($leaf, '(?<![\d.])v?(\d+(?:\.\d+){1,3})(?![\d.])')
+    if ($ver.Success) {
+        $mine = $null; try { $mine = [version]$ver.Groups[1].Value } catch { Write-ErrLog $_ }
+        $newer = $false; $siblings = 0
+        if ($parent -and [IO.Directory]::Exists($parent) -and $mine) {
+            try { foreach ($sd in [IO.Directory]::EnumerateDirectories($parent)) { $sv = [regex]::Match([IO.Path]::GetFileName($sd), '(?<![\d.])v?(\d+(?:\.\d+){1,3})(?![\d.])'); if ($sv.Success -and $sd -ne $path) { $siblings++; try { if ([version]$sv.Groups[1].Value -gt $mine) { $newer = $true } } catch { Write-ErrLog $_ } } } } catch { Write-ErrLog $_ }
+        }
+        if ($newer) { $life = 50; Add-Ev $ev 'Lifecycle' 'Folder name and sibling versions' "Version $($ver.Groups[1].Value); a newer version exists next to it" 'Positive' 0.7 'lowers safety' 'This looks like an older version. Older versions can be kept for rollback or recovery, so being old does not make it unnecessary.' }
+        else { $life = 30; Add-Ev $ev 'Lifecycle' 'Folder name and sibling versions' "Version $($ver.Groups[1].Value); no newer version found next to it" 'Positive' 0.7 'lowers safety' 'This looks like the newest or only version, which an application may be using.' }
+    }
+    elseif ($relp -match '\\(update|updates|rollback|previous|\.old|old versions?)(\\|$)') { $life = 55; Add-Ev $ev 'Lifecycle' 'Folder name' 'Name suggests update or rollback data' 'Positive' 0.5 'lowers safety' 'Update and rollback folders can be needed to recover an application.' }
+    else {
+        $ageDays = $(if ($facts.Newest -gt [datetime]::MinValue) { ((Get-Date) - $facts.Newest).TotalDays } else { 9999 })
+        if ($ageDays -lt 30) { $life = 70; Add-Ev $ev 'Lifecycle' 'Last change' ("A file here changed $([int]$ageDays) day(s) ago") 'Positive' 0.7 'lowers safety' 'Recently changed content is more likely to be in use or still being edited, and the copies may not have been synchronised for long.' }
+        elseif ($ageDays -lt 180) { $life = 85; Add-Ev $ev 'Lifecycle' 'Last change' ("Newest file changed about $([int]($ageDays / 30)) month(s) ago") 'Positive' 0.6 'lowers safety' 'The content changed within the last half year.' }
+        else { Add-Ev $ev 'Lifecycle' 'Folder name and last change' 'No version number or update pattern, and nothing changed for over 6 months' 'Negative' 0.6 'raises safety' 'Nothing suggests this is a versioned, update-related or recently used folder.' }
+    }
+    $dim.Lifecycle = $life
+
+    # ---------- 7 filesystem relationships and protected places
+    $fsd = 95; $hardBytes = [int64]$facts.HardBytes
+    if ($facts.RootReparse) { $fsd = 0; Add-Ev $ev 'Filesystem' 'Reparse point check' 'This folder is a junction or symbolic link' 'Positive' 0.95 'blocks deletion' 'It points to another place; what deleting it would affect cannot be safely resolved here.'; & $cap 30 'Filesystem relationship cannot be safely resolved (link)' }
+    elseif ($facts.Reparse -gt 0) { $fsd = 45; Add-Ev $ev 'Filesystem' 'Reparse point check' "$($facts.Reparse) link(s) inside the folder (not followed)" 'Positive' 0.9 'lowers safety' 'Links inside the folder point elsewhere. They are not followed, but deleting may remove links others use.'; & $cap 30 'Filesystem relationship cannot be safely resolved (links inside)' }
+    if ($facts.Hard -gt 0) { $fsd = [math]::Min($fsd, 60); Add-Ev $ev 'Filesystem' 'Hard link check' "$($facts.Hard) hard-linked file(s) found in the sample" 'Positive' 0.8 'lowers recoverable space' 'Hard-linked files share their storage with another path, so deleting them frees less space than the folder size.' }
+    $cloud = $false; foreach ($c2 in $roots.Cloud) { if (Test-PathInside $np $c2) { $cloud = $true } }
+    if ($cloud) { $fsd = [math]::Min($fsd, 55); Add-Ev $ev 'Filesystem' 'Cloud sync folder check' 'Inside a cloud-synchronised folder' 'Positive' 0.8 'lowers safety' 'Deleting here is usually mirrored to the cloud and other devices.'; & $cap 60 'Cloud synchronisation folder' }
+    if ($facts.Error) { Add-Ev $ev 'Filesystem' 'Folder walk' $facts.Error 'Unknown' 0 'lowers confidence' 'Part of the folder could not be examined.'; $unknown++ }
+    if ($fsd -eq 95 -and -not $facts.Error) { Add-Ev $ev 'Filesystem' 'Link and hard-link check' 'No junctions, symbolic links or hard links detected' 'Negative' 0.85 'raises safety' 'The folder is a plain folder with plain files.' }
+    $dim.Filesystem = $fsd
+
+    # ---------- critical sources
+    $crit = @(); foreach ($k3 in 'Process', 'Registry') { if ($ctx.Fail.ContainsKey($k3)) { $crit += $k3 } }
+    if ($crit.Count) { & $cap 60 ('Critical investigation source inaccessible: ' + ($crit -join ', ')) }
+
+    # ---------- score, overrides, penalty
+    $w = 0.0; foreach ($k4 in $script:SafetyWeights.Keys) { $w += $dim[$k4] * $script:SafetyWeights[$k4] / 100.0 }
+    $pen = [math]::Min(10, 2 * [math]::Max(0, $unknown - 2))   # two standing gaps (open handles, uninspected sources) only lower confidence
+    $raw = [math]::Round($w - $pen, 2); if ($raw -lt 0) { $raw = 0 }
+    $final = $raw; $applied = $null
+    foreach ($c3 in $caps) { if ($c3.Max -lt $final) { $final = $c3.Max; $applied = $c3 } }
+    $safety = [int][math]::Round($final)
+    $class = Get-SafetyClass $safety
+
+    # ---------- assessment confidence (how complete and reliable the evidence is; not the safety score)
+    $rsum = 0.0; foreach ($e2 in $ev) { $rsum += [double]$e2.Reliability }
+    $coverage = $(if ($ev.Count) { $rsum / $ev.Count } else { 0 })
+    $fresh = 1.0; $cons = $(if ($facts.Capped) { 0.8 } else { 1.0 }); if ($crit.Count) { $cons -= 0.1 }
+    $conf = [int][math]::Round(100 * (0.7 * $coverage + 0.2 * $fresh + 0.1 * $cons)); $conf = [math]::Max(0, [math]::Min(100, $conf))
+    $confClass = Get-ConfClass $conf
+
+    # ---------- recommendation
+    $rec = switch ($class) { 'Very likely safe' { 'Eligible for controlled cleanup' } 'Likely safe' { 'Eligible for backup and cleanup testing' } 'Uncertain' { 'Keep and investigate' } default { 'Keep' } }
+    if ($conf -lt 50) { $rec = 'Not enough information to decide' }
+    elseif ($conf -lt 75 -and ($class -eq 'Very likely safe' -or $class -eq 'Likely safe')) { $rec = 'Keep and investigate' }
+    if ($caps.Count -gt 0 -and $safety -le 34) { $rec = 'Keep' }
+
+    # ---------- risks
+    if ($dim.Runtime -le 40) { [void]$risks.Add('Potential application failure: a running program, service or open file uses this folder.') }
+    if ($cls -like 'user-generated*') { [void]$risks.Add('Potential user-data loss: documents or media that cannot be rebuilt.') }
+    if ($cls -like 'application state*') { [void]$risks.Add('Potential profile or data corruption: databases or settings of an application.') }
+    if (($ownerClass -in @('Confirmed', 'Probable')) -and $own -le 25) { [void]$risks.Add("Potential application failure: the folder belongs to $owner.") }
+    if ($dim.Lifecycle -le 55) { [void]$risks.Add('Potential update or rollback failure: versioned or update-related folder.') }
+    if ($ownersDiffer) { [void]$risks.Add('Potential shared-data disruption: other applications keep their own copies.') }
+    if ($cloud) { [void]$risks.Add('Deleting here may also delete the files from the cloud and other devices.') }
+    if ($risks.Count -eq 0) { [void]$risks.Add('No specific risk was identified in the investigated sources; unknown sources remain (see Missing information).') }
+
+    # ---------- explanation (built only from recorded evidence)
+    $why = New-Object System.Collections.ArrayList
+    if ($applied) { [void]$why.Add('Safety cap applied: ' + $applied.Rule + " (maximum $($applied.Max)%).") }
+    foreach ($e3 in ($ev | Where-Object { $_.Result -eq 'Positive' })) { [void]$why.Add($e3.Explanation) }
+    foreach ($e3 in ($ev | Where-Object { $_.Result -eq 'Negative' })) { [void]$why.Add($e3.Explanation) }
+    $missing = @($ev | Where-Object { $_.Result -eq 'Unknown' } | ForEach-Object { $_.Finding })
+    $recovery = [int64]$set.Size; $unique = [int64]$set.Size - [math]::Min([int64]$set.Size, $hardBytes)
+
+    $res = [pscustomobject]@{
+        Path = $path; Key = $key; Sig = $sig; Policy = $script:SafetyPolicy; Time = (Get-Date).ToString('s'); Similarity = 100
+        Files = $facts.Files; Dirs = $facts.Dirs; Modified = $it.Modified; Size = [int64]$set.Size
+        Owner = $owner; OwnerClass = $ownerClass; Application = $(if ($owner) { $owner } else { 'Unknown' }); DataClass = $cls
+        Dims = $dim; Weighted = [math]::Round($w, 2); Penalty = $pen; Caps = @($caps); Safety = $safety; Class = $class
+        Confidence = $conf; ConfClass = $confClass; Recommendation = $rec; Evidence = @($ev); Risks = @($risks); Missing = $missing; Why = @($why)
+        ApparentSize = [int64]$set.Size; UniquePhysical = $unique; Recoverable = $unique; SharedByLinks = [int64][math]::Min([int64]$set.Size, $hardBytes)
+        Complete = ($ctx.Fail.Count -eq 0)
+    }
+    $script:SafetyCache[$key] = $res
+    $res
+}
+
+function Get-SetSafety($set) {   # assessments already made for the copies of a set (no new investigation)
+    $out = New-Object System.Collections.ArrayList
+    foreach ($o in $set.Items) { $a = Get-CachedSafety $o $set; if ($a) { [void]$out.Add($a) } }
+    $out.ToArray()
+}
+function Get-SetBestClass($set) {   # class of the copy that is safest to delete; '' when nothing is assessed yet
+    $best = $null; foreach ($a in (Get-SetSafety $set)) { if (-not $best -or $a.Safety -gt $best.Safety) { $best = $a } }
+    if ($best) { $best.Class } else { '' }
+}
+# Default action by safety: a copy judged below 80% starts as KEEP (even if that leaves every copy of the set on KEEP). Each copy is judged once, the first time it is assessed,
+# so what the user ticks afterwards is never reverted; the judged paths are remembered between runs.
+$script:LowKeepDone = New-Object 'System.Collections.Generic.HashSet[string]'
+try { $jf = Join-Path $env:LOCALAPPDATA 'DupCleaner\safety-judged.txt'; if (Test-Path -LiteralPath $jf) { foreach ($ln in [IO.File]::ReadAllLines($jf)) { if ($ln) { [void]$script:LowKeepDone.Add($ln) } } } } catch { Write-ErrLog $_ }
+function Get-RiskClass([int]$r) { if ($r -ge 80) { 'Very high' } elseif ($r -ge 60) { 'High' } elseif ($r -ge 35) { 'Moderate' } else { 'Low' } }
+# The two scores of a folder set (they do not depend on what is ticked):
+#  SAFE TO KEEP ONE  = how safe it is to delete the extra copies and live with exactly one (the weakest deleted copy, with the best copy kept)
+#  RISK IF ALL GO    = how bad it would be to delete EVERY copy (documents lost, program broken, ...)
+$script:SetPlan = @{}
+function Get-SetPlan($set) {
+    $p = $script:SetPlan[$set]; if ($p) { return $p }
+    $live = @($set.Items | Where-Object { [IO.Directory]::Exists($_.Path) }); if ($live.Count -lt 2) { return $null }
+    $orig = @($set.Items | ForEach-Object { [bool]$_.Remove })
+    $ord = @(@($live | Where-Object { -not $_.Remove }) + @($live | Where-Object { $_.Remove })); $cand = $(if ($live.Count -le 3) { $ord } else { @($ord | Select-Object -First 1) })   # small sets: try every copy as the keeper; big sets: the currently kept one
+    $best = $null
+    try {
+        foreach ($k in $cand) {
+            foreach ($o in $set.Items) { $o.Remove = ($o -ne $k) }   # pretend: keep only this copy
+            $worst = $null; $all = New-Object System.Collections.ArrayList
+            foreach ($o in $live) { $a = Get-SafetyAssessment $o $set -Force; [void]$all.Add($a); if ($o -ne $k -and (-not $worst -or $a.Safety -lt $worst.Safety)) { $worst = $a } }
+            if ($worst -and (-not $best -or $worst.Safety -gt $best.Worst.Safety)) { $best = [pscustomobject]@{ Keeper = $k; Worst = $worst; All = @($all) } }
+        }
+    } finally { for ($i = 0; $i -lt $set.Items.Count; $i++) { $set.Items[$i].Remove = $orig[$i] } }
+    if (-not $best) { return $null }
+    # risk of deleting every copy: the data/ownership/runtime checks without the "another copy remains" credit; unique documents are heavily penalised
+    $daSafe = 100; $why = ''
+    foreach ($a in $best.All) {
+        $d = $a.Dims; $user = ($a.DataClass -like 'user-generated*')
+        $dAll = $(if ($user) { 15 } else { $d.Data })
+        $w = ($d.Runtime * 20 + $d.Ownership * 20 + $d.Config * 15 + $dAll * 15 + $d.Lifecycle * 10 + $d.Filesystem * 5) / 85.0
+        $rule = ''
+        foreach ($c in $a.Caps) { if ($c.Rule -notmatch 'last remaining|Independently owned|Unique user data') { if ($c.Max -lt $w) { $w = $c.Max; $rule = $c.Rule } } }
+        if ($user -and $w -gt 20) { $w = 20; $rule = 'Your documents or media: deleting every copy would lose them for good' }
+        if ($w -lt $daSafe) { $daSafe = $w; $why = $(if ($rule) { $rule } elseif ($a.DataClass) { "Contents: $($a.DataClass)" } else { '' }) }
+    }
+    $risk = [int](100 - [math]::Round($daSafe))
+    $p = [pscustomobject]@{ Score = [int]$best.Worst.Safety; Class = $best.Worst.Class; Keeper = $best.Keeper.Path; Weakest = $best.Worst.Path; Risk = $risk; RiskClass = (Get-RiskClass $risk); RiskWhy = $why; Copies = $set.Items.Count; Assessed = $live.Count; Marked = $false }
+    $script:SetPlan[$set] = $p
+    $p
+}
+# Default action by safety: a set judged below 80% starts with every copy on KEEP (the user can still tick copies for deletion). Each set is judged once, the first time it is assessed,
+# so what the user ticks afterwards is never reverted; the judged paths are remembered between runs.
+$script:LowKeepDone = New-Object 'System.Collections.Generic.HashSet[string]'
+try { $jf = Join-Path $env:LOCALAPPDATA 'DupCleaner\safety-judged2.txt'; if (Test-Path -LiteralPath $jf) { foreach ($ln in [IO.File]::ReadAllLines($jf)) { if ($ln) { [void]$script:LowKeepDone.Add($ln) } } } } catch { Write-ErrLog $_ }
+function Apply-LowSafetyKeep($set) {   # returns $true when a mark was changed (the per-copy assessments then need a fresh pass, because they depend on the marks)
+    $p = $script:SetPlan[$set]; if (-not $p) { return $false }
+    $fresh = $false; foreach ($o in $set.Items) { $k = Get-NormPath $o.Path; if ($script:LowKeepDone.Add($k)) { $fresh = $true } }
+    if (-not $fresh -or $p.Score -ge 80) { return $false }
+    $changed = $false; foreach ($o in $set.Items) { if ($o.Remove) { $o.Remove = $false; $changed = $true } }
+    $changed
+}
+function Assess-SetFully($set, [bool]$Full = $true) {   # score the set (keep-one plan + delete-all risk), apply the low-score default and, when $Full, assess every copy for the current marks (what the cards show)
+    [void](Get-SetPlan $set)
+    if (-not $Full) { [void](Apply-LowSafetyKeep $set); return }
+    foreach ($pass in 1..2) {
+        foreach ($o in $set.Items) { if ([IO.Directory]::Exists($o.Path) -and -not (Get-CachedSafety $o $set)) { [void](Get-SafetyAssessment $o $set) } }
+        if (-not (Apply-LowSafetyKeep $set)) { break }
+    }
+}
+function Get-SetScore($set) { $script:SetPlan[$set] }   # the keep-one plan of a set; $null until it has been investigated
+function Get-ScoreColor($v) { if ($v -gt 90) { $script:UiKeepFg } elseif ($v -ge 80) { [Drawing.Color]::FromArgb(236, 156, 32) } else { $script:UiDelFg } }   # above 90 green, 80-90 orange, below 80 red
+function Format-SafetyText($a) { "Safety $($a.Safety)% - $($a.Class)   |   Confidence $($a.Confidence)% ($($a.ConfClass))" }
+
+function Format-SafetyReport($a) {
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("Safety assessment: $($a.Safety)% - $($a.Class)")
+    [void]$sb.AppendLine("Assessment confidence: $($a.Confidence)% - $($a.ConfClass)")
+    [void]$sb.AppendLine("Folder: $($a.Path)")
+    [void]$sb.AppendLine("Recommendation: $($a.Recommendation)")
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('Why:'); foreach ($w in $a.Why) { [void]$sb.AppendLine(' - ' + $w) }
+    [void]$sb.AppendLine(''); [void]$sb.AppendLine('Risks:'); foreach ($r in $a.Risks) { [void]$sb.AppendLine(' - ' + $r) }
+    if ($a.Missing.Count) { [void]$sb.AppendLine(''); [void]$sb.AppendLine('Missing information:'); foreach ($m in $a.Missing) { [void]$sb.AppendLine(' - ' + $m) } }
+    [void]$sb.AppendLine(''); [void]$sb.AppendLine('Disk space:')
+    [void]$sb.AppendLine("  Apparent size: $(Format-Size $a.ApparentSize)   Estimated unique physical: $(Format-Size $a.UniquePhysical)   Estimated recoverable: $(Format-Size $a.Recoverable)   Shared through links: $(Format-Size $a.SharedByLinks)")
+    [void]$sb.AppendLine(''); [void]$sb.AppendLine('Evidence:')
+    foreach ($e in $a.Evidence) { [void]$sb.AppendLine("  [$($e.Id)] $($e.Category) / $($e.Result) / reliability $([int](100 * $e.Reliability))% / $($e.Impact)"); [void]$sb.AppendLine("      Source: $($e.Source)"); [void]$sb.AppendLine("      Finding: $($e.Finding)") }
+    [void]$sb.AppendLine(''); [void]$sb.AppendLine("Policy version $($a.Policy), investigated $($a.Time). Read-only investigation: nothing was changed.")
+    $sb.ToString()
+}
+
+function Save-SafetyReports {
+    try {
+        $dir = Join-Path $env:LOCALAPPDATA 'DupCleaner'; [void][IO.Directory]::CreateDirectory($dir)
+        $items = @($script:SafetyCache.Values | ForEach-Object { $_ })
+        $json = ($items | ConvertTo-Json -Depth 6 -Compress)
+        [IO.File]::WriteAllText((Join-Path $dir 'safety-reports.json'), $json, (New-Object Text.UTF8Encoding($false)))
+        [IO.File]::WriteAllLines((Join-Path $dir 'safety-judged2.txt'), [string[]]@($script:LowKeepDone), (New-Object Text.UTF8Encoding($false)))
+    } catch { Write-ErrLog $_ }
+}
+
+$script:SafetyFilterNames = @('All safety levels', 'Very likely safe', 'Likely safe', 'Uncertain', 'High risk', 'Unsafe', 'Not assessed yet')
+function Place-SetButtons {
+    $sp = $script:SP; if (-not $sp -or -not $sp.SetHd) { return }
+    $s = $sp.SetHd; $b = $sp.BtnMarked; $r = $sp.BtnSafety
+    $b.Location = New-Object Drawing.Point(($s.ClientSize.Width - $b.Width - 8), 0)
+    $x = $s.ClientSize.Width - 8; if ($b.Visible) { $x = $b.Left - 8 }
+    $r.Location = New-Object Drawing.Point(($x - $r.Width), 0)
+}
+function Update-SafeLine {
+    $sp = $script:SP; if (-not $sp -or -not $sp.SafeLine) { return }
+    $set = $script:SpCur
+    if (-not $set) { $sp.SafeLine.Text = ''; return }
+    $as = @(Get-SetSafety $set)
+    if ($as.Count -lt $set.Items.Count -and $script:SafetyTimer -and -not $script:Scanning) { $script:SafetyTimer.Stop(); $script:SafetyTimer.Start() }
+    if ($as.Count -eq 0) { $sp.SafeLine.Text = 'Safety: investigating this set...'; return }
+    $cnt = @{}; foreach ($c in $script:SafetyClasses) { $cnt[$c] = 0 }; $rec = 0L
+    foreach ($a in $as) { $cnt[$a.Class]++ }
+    foreach ($o in $set.Items) { if ($o.Remove) { $a2 = Get-CachedSafety $o $set; if ($a2) { $rec += $a2.Recoverable } } }
+    $ts = Get-SetScore $set
+    if (-not $ts) { $sp.SafeLine.Text = 'Safety: investigating this set...'; return }
+    $keepName = $(if ($ts.Keeper) { $ts.Keeper } else { '' }); $rec2 = [int64]$set.Size * ($set.Items.Count - 1)
+    $sp.SafeLine.Text = "SAFE TO KEEP ONLY ONE: $($ts.Score)% $($ts.Class) (keeping $keepName)   |   RISK IF YOU DELETE ALL COPIES: $($ts.Risk)% $($ts.RiskClass)$(if ($ts.RiskWhy) { ' - ' + $ts.RiskWhy })   |   keeping one frees about $(Format-Size $rec2)"
+}
+function Invoke-SetAssess {   # investigate the copies of the open set that have no assessment yet (read-only)
+    $set = $script:SpCur; if (-not $set -or $script:Scanning) { return }
+    $todo = @($set.Items | Where-Object { -not (Get-CachedSafety $_ $set) -and [IO.Directory]::Exists($_.Path) }); if ($todo.Count -eq 0) { return }
+    $form.Cursor = [Windows.Forms.Cursors]::WaitCursor
+    $before = Get-SetSig $set
+    try { if ($script:SpCur -ne $set) { return }; Assess-SetFully $set } finally { $form.Cursor = [Windows.Forms.Cursors]::Default }
+    Save-SafetyReports
+    if ($before -ne (Get-SetSig $set)) { Request-Summary }
+    Resort-SetList $set
+    if ($script:SpCur -eq $set) { Refresh-Cards; $script:SP.Lb.Invalidate() }
+}
+function Start-AutoAssess {   # investigate every duplicate-folder set in the background, the set that frees most space first; the list updates as each one ends
+    $sp = $script:SP; if (-not $sp -or $script:Scanning) { return }
+    $f = $script:Results['Folder']; if (-not $f -or -not $script:AaTimer) { return }
+    $script:AaTimer.Stop()
+    $q = [SetUtil]::Sorted($f, 0, '')
+    $script:AaQueue = @($q | Where-Object { $s = $_; -not $script:SetPlan[$s] -and @($s.Items | Where-Object { [IO.Directory]::Exists($_.Path) }).Count -ge 2 })
+    $script:AaIdx = 0; $script:AaTotal = $script:AaQueue.Count
+    if ($script:AaTotal -gt 0) { $script:AaTimer.Start() }
+}
+function Step-AutoAssess {
+    $sp = $script:SP
+    if (-not $sp -or $script:Scanning) { $script:AaTimer.Stop(); return }
+    if ([ClickWatch]::EscDown()) { $script:AaTimer.Stop(); Save-SafetyReports; Rebuild-SetList; $sp.Count.Text = "Safety investigation stopped at $($script:AaIdx) of $($script:AaTotal) sets"; return }
+    if ($script:AaIdx -ge $script:AaQueue.Count) { $script:AaTimer.Stop(); Save-SafetyReports; Rebuild-SetList; return }
+    $s = $script:AaQueue[$script:AaIdx]; $script:AaIdx++
+    $script:AaTimer.Stop()
+    $moved = $false; try { $before = Get-SetSig $s; Assess-SetFully $s $false; $moved = ($before -ne (Get-SetSig $s)) } catch { Write-ErrLog $_ }
+    $script:AaTimer.Start()
+    Resort-SetList $s   # the new score may move this set; the selected set stays selected
+    $nowT = [Environment]::TickCount; if (($nowT - $script:InvAt) -gt 1000 -or ($nowT - $script:InvAt) -lt 0) { $script:InvAt = $nowT; $sp.Lb.Invalidate(); try { $sp.PvDonut.Invalidate() } catch { Write-ErrLog $_ } }
+    if ($moved) { Request-Summary }
+    if ($script:SpCur -eq $s) { Refresh-Cards }
+    $sp.Count.Text = "Investigating safety: $($script:AaIdx) of $($script:AaTotal) sets, largest first - press Esc to stop"
+}
+function Invoke-AssessAll { Start-AutoAssess }
+function Invoke-AssessAll-Old {   # (kept for reference) investigate every listed set (Esc stops)
+    $sp = $script:SP; if (-not $sp -or $script:Scanning) { return }
+    $sets = @($sp.Lb.Items); if ($sets.Count -eq 0) { return }
+    $max = 500; $total = [math]::Min($sets.Count, $max)
+    if ($sets.Count -gt $max) { if ([Windows.Forms.MessageBox]::Show("$($sets.Count) sets are listed. Investigate the first $max (largest first by the current sort)? Each set takes a moment.", 'DupCleaner', 'YesNo', 'Question') -ne 'Yes') { return } }
+    $form.Cursor = [Windows.Forms.Cursors]::WaitCursor; $n = 0
+    try {
+        foreach ($s in ($sets | Select-Object -First $total)) {
+            if ([ClickWatch]::EscDown()) { break }
+            foreach ($o in $s.Items) { if ([IO.Directory]::Exists($o.Path)) { [void](Get-SafetyAssessment $o $s) } }
+            $n++; $sp.Count.Text = "Investigating safety: $n of $total  -  press Esc to stop"; [Windows.Forms.Application]::DoEvents()
+        }
+    } finally { $form.Cursor = [Windows.Forms.Cursors]::Default }
+    Save-SafetyReports
+    $script:SpTimer.Stop(); $script:SpTimer.Start()
+}
+function Get-RiskyRemovals($items, $set) {   # copies about to be removed that were assessed as uncertain-or-worse (for the current marks)
+    @($items | ForEach-Object { $a = Get-CachedSafety $_ $set; if ($a -and $a.Safety -lt 65) { $a } })
+}
+function Confirm-RiskyRemovals($risky) {
+    if (-not $risky -or $risky.Count -eq 0) { return $true }
+    $lines = ($risky | Select-Object -First 8 | ForEach-Object { "$($_.Safety)% $($_.Class): $($_.Path)" }) -join "`n"
+    $more = $(if ($risky.Count -gt 8) { "`n... and $($risky.Count - 8) more" } else { '' })
+    [Windows.Forms.MessageBox]::Show("The safety investigation rated $($risky.Count) of these folders as uncertain, high risk or unsafe to delete:`n`n$lines$more`n`nIdentical contents do not mean a folder is unused. Remove them anyway?", 'Safety warning', 'YesNo', 'Warning', 'Button2') -eq 'Yes'
+}
+
+function Show-SafetyReview {
+    $set = $script:SpCur; if (-not $set) { return }
+    $sc = Get-Sc
+    $form.Cursor = [Windows.Forms.Cursors]::WaitCursor
+    try { foreach ($o in $set.Items) { if ([IO.Directory]::Exists($o.Path)) { [void](Get-SafetyAssessment $o $set) } } } finally { $form.Cursor = [Windows.Forms.Cursors]::Default }
+    $script:SfDlg = New-Object Windows.Forms.Form; $script:SfDlg.Text = 'Safety review  -  ' + [SetUtil]::Name($set); $script:SfDlg.StartPosition = 'CenterParent'; $script:SfDlg.ShowInTaskbar = $false
+    $script:SfDlg.BackColor = $script:UiBg; $script:SfDlg.ForeColor = $script:UiText; $script:SfDlg.Font = $form.Font; $script:SfDlg.Icon = $form.Icon
+    $script:SfDlg.Size = New-Object Drawing.Size([int]([math]::Min($form.Width * 0.92, 2400)), [int]([math]::Min($form.Height * 0.9, 1500)))
+    $t = New-Object Windows.Forms.TableLayoutPanel; $t.Dock = 'Fill'; $t.ColumnCount = 1; $t.RowCount = 4; $t.Padding = New-Object Windows.Forms.Padding([int](12 * $sc))
+    [void]$t.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('Percent', 100)))
+    foreach ($rs in @(@('AutoSize', 0), @('Percent', 34), @('Percent', 66), @('AutoSize', 0))) { [void]$t.RowStyles.Add($(if ($rs[0] -eq 'AutoSize') { New-Object Windows.Forms.RowStyle('AutoSize') } else { New-Object Windows.Forms.RowStyle('Percent', $rs[1]) })) }
+    $script:SfOver = New-Object Windows.Forms.Label; $script:SfOver.AutoSize = $true; $script:SfOver.MaximumSize = New-Object Drawing.Size([int]($script:SfDlg.Width - 60 * $sc), 0); $script:SfOver.Margin = New-Object Windows.Forms.Padding(0, 0, 0, [int](8 * $sc)); $script:SfOver.UseMnemonic = $false
+    $script:SfLv = New-Object Windows.Forms.ListView; $script:SfLv.Dock = 'Fill'; $script:SfLv.View = 'Details'; $script:SfLv.FullRowSelect = $true; $script:SfLv.HideSelection = $false; $script:SfLv.MultiSelect = $false; $script:SfLv.BorderStyle = 'None'; $script:SfLv.BackColor = $script:UiPanel; $script:SfLv.ForeColor = $script:UiText; $script:SfLv.Font = $script:ListFont; $script:SfLv.OwnerDraw = $true
+    foreach ($c in @(@('Folder path', 300), @('Application', 130), @('Size', 70), @('Similarity', 80), @('Safety', 70), @('Confidence', 90), @('Status', 120), @('Recommendation', 200))) { [void]$script:SfLv.Columns.Add($c[0], [int]($c[1] * $sc)) }
+    $script:SfLv.Add_DrawColumnHeader({ param($s, $e) $b = New-Object Drawing.SolidBrush $script:UiBg; $e.Graphics.FillRectangle($b, $e.Bounds); $b.Dispose(); [Windows.Forms.TextRenderer]::DrawText($e.Graphics, $e.Header.Text, $s.Font, (New-Object Drawing.Rectangle(($e.Bounds.X + 6), $e.Bounds.Y, ($e.Bounds.Width - 8), $e.Bounds.Height)), $script:UiMuted, [Windows.Forms.TextFormatFlags]'Left, VerticalCenter, EndEllipsis, NoPrefix'); $pn = New-Object Drawing.Pen $script:UiLine; $e.Graphics.DrawLine($pn, $e.Bounds.Left, ($e.Bounds.Bottom - 1), $e.Bounds.Right, ($e.Bounds.Bottom - 1)); $pn.Dispose() })
+    $script:SfLv.Add_DrawItem({ param($s, $e) $e.DrawDefault = $false })
+    $script:SfLv.Add_DrawSubItem({
+        param($s, $e)
+        $sel = $e.Item.Selected
+        $bg = New-Object Drawing.SolidBrush $(if ($sel) { $script:UiAccentBg } else { $script:UiPanel }); $e.Graphics.FillRectangle($bg, $e.Bounds); $bg.Dispose()
+        [Windows.Forms.TextRenderer]::DrawText($e.Graphics, $e.SubItem.Text, $s.Font, (New-Object Drawing.Rectangle(($e.Bounds.X + 6), $e.Bounds.Y, ($e.Bounds.Width - 8), $e.Bounds.Height)), $e.Item.ForeColor, [Windows.Forms.TextFormatFlags]'Left, VerticalCenter, EndEllipsis, NoPrefix')
+    })
+    $script:SfLv2 = New-Object Windows.Forms.ListView; $script:SfLv2.Dock = 'Fill'; $script:SfLv2.View = 'Details'; $script:SfLv2.FullRowSelect = $true; $script:SfLv2.BorderStyle = 'None'; $script:SfLv2.BackColor = $script:UiPanel; $script:SfLv2.ForeColor = $script:UiText; $script:SfLv2.Font = $script:ListFont; $script:SfLv2.OwnerDraw = $true
+    foreach ($c in @(@('Assessment dimension', 250), @('Weight', 60), @('Score', 60), @('Adds', 60))) { [void]$script:SfLv2.Columns.Add($c[0], [int]($c[1] * $sc)) }
+    $script:SfLv2.Add_DrawColumnHeader({ param($s, $e) $b = New-Object Drawing.SolidBrush $script:UiBg; $e.Graphics.FillRectangle($b, $e.Bounds); $b.Dispose(); [Windows.Forms.TextRenderer]::DrawText($e.Graphics, $e.Header.Text, $s.Font, (New-Object Drawing.Rectangle(($e.Bounds.X + 6), $e.Bounds.Y, ($e.Bounds.Width - 8), $e.Bounds.Height)), $script:UiMuted, [Windows.Forms.TextFormatFlags]'Left, VerticalCenter, EndEllipsis, NoPrefix') })
+    $script:SfLv2.Add_DrawItem({ param($s, $e) $e.DrawDefault = $false })
+    $script:SfLv2.Add_DrawSubItem({ param($s, $e) $bg = New-Object Drawing.SolidBrush $script:UiPanel; $e.Graphics.FillRectangle($bg, $e.Bounds); $bg.Dispose(); [Windows.Forms.TextRenderer]::DrawText($e.Graphics, $e.SubItem.Text, $s.Font, (New-Object Drawing.Rectangle(($e.Bounds.X + 6), $e.Bounds.Y, ($e.Bounds.Width - 8), $e.Bounds.Height)), $e.Item.ForeColor, [Windows.Forms.TextFormatFlags]'Left, VerticalCenter, EndEllipsis, NoPrefix') })
+    $script:SfTxt = New-Object Windows.Forms.TextBox; $script:SfTxt.Dock = 'Fill'; $script:SfTxt.Multiline = $true; $script:SfTxt.ReadOnly = $true; $script:SfTxt.ScrollBars = 'Both'; $script:SfTxt.WordWrap = $false; $script:SfTxt.BorderStyle = 'None'; $script:SfTxt.BackColor = $script:UiPanel; $script:SfTxt.ForeColor = $script:UiText; $script:SfTxt.Font = New-Object Drawing.Font('Consolas', 10)
+    $script:SfBot = New-Object Windows.Forms.SplitContainer; $script:SfBot.Dock = 'Fill'; $script:SfBot.Orientation = 'Vertical'; $script:SfBot.BackColor = $script:UiBg; $script:SfBot.Panel1.BackColor = $script:UiBg; $script:SfBot.Panel2.BackColor = $script:UiBg; $script:SfBot.SplitterWidth = [int](6 * $sc)
+    $script:SfBot.Panel1.Controls.Add($script:SfLv2); $script:SfBot.Panel2.Controls.Add($script:SfTxt)
+    $fl = New-Object Windows.Forms.FlowLayoutPanel; $fl.AutoSize = $true; $fl.FlowDirection = 'LeftToRight'; $fl.Dock = 'Fill'
+    $bAgain = New-Btn 'Investigate again'; $bSave = New-Btn 'Save report...'; $bClose = New-Btn 'Close' $true
+    foreach ($b in $bAgain, $bSave, $bClose) { $b.MinimumSize = New-Object Drawing.Size(0, 0) }
+    $fl.Controls.AddRange(@($bAgain, $bSave, $bClose))
+    $t.Controls.Add($script:SfOver, 0, 0); $t.Controls.Add($script:SfLv, 0, 1); $t.Controls.Add($script:SfBot, 0, 2); $t.Controls.Add($fl, 0, 3)
+    $script:SfDlg.Controls.Add($t)
+    $script:SfState = @{ Set = $set }
+    $script:SfFill = {
+        $script:SfLv.BeginUpdate(); $script:SfLv.Items.Clear()
+        $cnt = @{}; foreach ($c in $script:SafetyClasses) { $cnt[$c] = 0 }; $rec = 0L; $app = 0L
+        foreach ($o in $script:SfState.Set.Items) {
+            $a = Get-CachedSafety $o $script:SfState.Set; if (-not $a) { continue }
+            $cnt[$a.Class]++; $app += $a.ApparentSize; if ($o.Remove) { $rec += $a.Recoverable }
+            $li = New-Object Windows.Forms.ListViewItem($a.Path); $li.Tag = $a
+            foreach ($v in @($a.Application, (Format-Size $a.ApparentSize), "$($a.Similarity)%", "$($a.Safety)%", "$($a.Confidence)%", $a.Class, $a.Recommendation)) { [void]$li.SubItems.Add([string]$v) }
+            $li.ForeColor = $(if ($a.Safety -ge 85) { $script:UiKeepFg } elseif ($a.Safety -ge 65) { $script:UiText } else { $script:UiDelFg })
+            [void]$script:SfLv.Items.Add($li)
+        }
+        $script:SfLv.EndUpdate()
+        $script:SfOver.Text = "$($script:SfState.Set.Items.Count) copies  -  total apparent storage $(Format-Size $app)  -  recoverable from the marked copies about $(Format-Size $rec)`r`n$($cnt['Very likely safe']) very likely safe,  $($cnt['Likely safe']) likely safe,  $($cnt['Uncertain']) uncertain,  $($cnt['High risk']) high risk,  $($cnt['Unsafe']) unsafe.   Deletion safety and assessment confidence are different measures: similarity (100% here) never raises the safety score."
+        if ($script:SfLv.Items.Count) { $script:SfLv.Items[0].Selected = $true }
+    }
+    $script:SfLv.Add_SelectedIndexChanged({
+        if ($script:SfLv.SelectedItems.Count -eq 0) { return }
+        $a = $script:SfLv.SelectedItems[0].Tag
+        $script:SfLv2.BeginUpdate(); $script:SfLv2.Items.Clear()
+        foreach ($k in $script:SafetyWeights.Keys) {
+            $li = New-Object Windows.Forms.ListViewItem($script:SafetyDimNames[$k]); foreach ($v in @("$($script:SafetyWeights[$k])%", [string]$a.Dims[$k], ('{0:N1}' -f ($a.Dims[$k] * $script:SafetyWeights[$k] / 100.0)))) { [void]$li.SubItems.Add($v) }
+            $li.ForeColor = $(if ($a.Dims[$k] -ge 85) { $script:UiKeepFg } elseif ($a.Dims[$k] -ge 55) { $script:UiText } else { $script:UiDelFg }); [void]$script:SfLv2.Items.Add($li)
+        }
+        $rows = @(@('Weighted score', '', '', ('{0:N1}' -f $a.Weighted), $script:UiText), @('Missing-evidence penalty', '', '', ('-{0:N1}' -f $a.Penalty), $script:UiMuted))
+        foreach ($c in $a.Caps) { $rows += , @("Safety cap: $($c.Rule)", '', '', "max $($c.Max)", $script:UiDelFg) }
+        $rows += , @('Final deletion safety', '', '', "$($a.Safety)%", $script:UiAccent)
+        $rows += , @("Assessment confidence ($($a.ConfClass))", '', '', "$($a.Confidence)%", $script:UiAccent)
+        foreach ($r in $rows) { $li = New-Object Windows.Forms.ListViewItem([string]$r[0]); foreach ($v in $r[1..3]) { [void]$li.SubItems.Add([string]$v) }; $li.ForeColor = $r[4]; [void]$script:SfLv2.Items.Add($li) }
+        $script:SfLv2.EndUpdate()
+        $script:SfTxt.Text = (Format-SafetyReport $a)
+    })
+    $bAgain.Add_Click({
+        $form.Cursor = [Windows.Forms.Cursors]::WaitCursor
+        try { [void](Get-SafetyContext -Force); foreach ($o in $script:SfState.Set.Items) { if ([IO.Directory]::Exists($o.Path)) { [void](Get-SafetyAssessment $o $script:SfState.Set -Force) } } } finally { $form.Cursor = [Windows.Forms.Cursors]::Default }
+        & $script:SfFill
+    })
+    $bSave.Add_Click({
+        $sd = New-Object Windows.Forms.SaveFileDialog; $sd.Filter = 'Text report (*.txt)|*.txt'; $sd.FileName = 'safety-report-' + [SetUtil]::Name($script:SfState.Set) + '.txt'
+        if ($sd.ShowDialog() -eq 'OK') {
+            $sb = New-Object Text.StringBuilder
+            foreach ($o in $script:SfState.Set.Items) { $a = Get-CachedSafety $o $script:SfState.Set; if ($a) { [void]$sb.AppendLine((Format-SafetyReport $a)); [void]$sb.AppendLine(('=' * 100)) } }
+            [IO.File]::WriteAllText($sd.FileName, $sb.ToString(), (New-Object Text.UTF8Encoding($true)))
+        }
+    })
+    $bClose.Add_Click({ $script:SfDlg.Close() })
+    $script:SfDlg.Add_Shown({ & $script:SfFill; $script:SfBot.SplitterDistance = [int]($script:SfBot.Width * 0.48); $script:SfLv.Columns[7].Width = -2 })
+    $script:SafetyDlg = $script:SfDlg
+    [void]$script:SfDlg.ShowDialog($form)
+    Save-SafetyReports; $script:SafetyDlg = $null
+    Refresh-Cards; $script:SP.Lb.Invalidate()
+}
 $script:SpPruning = $false
 function Show-SetDetail($set) {
     if ($set -and -not $script:SpPruning) {
@@ -1528,6 +2312,7 @@ function Show-SetDetail($set) {
     }
     Refresh-Cards
     Show-Inside
+    if ($set -and -not $script:Scanning -and $script:SafetyTimer) { $script:SafetyTimer.Stop(); $script:SafetyTimer.Start() }
 }
 
 function Refresh-Cards {
@@ -1538,7 +2323,7 @@ function Refresh-Cards {
         $keepY = -$pn.AutoScrollPosition.Y
         foreach ($c in @($pn.Controls)) { $pn.Controls.Remove($c); $c.Dispose() }
         if (-not $set) {
-            $sp.BtnMarked.Visible = $false
+            $sp.BtnMarked.Visible = $false; $sp.BtnSafety.Visible = $false; $sp.SafeLine.Text = ''
             $sp.SetHd.Text = 'No set chosen'
             $sp.SetHint.Text = $(if ($script:Results['Folder']) { 'Choose a duplicate folder set on the left.' } else { 'Scan some folders: the duplicate folders appear on the left.' })
             return
@@ -1546,7 +2331,7 @@ function Refresh-Cards {
         $sp.SetHd.Text = "$([SetUtil]::Name($set))  -  $($set.Items.Count) identical folders, $(Format-Size $set.Size) each"
         $sp.SetHint.Text = 'Tick "Delete this copy" to mark copies, "Keep only this one" to keep one, or "Delete now" to remove a folder at once. Click a copy to see what is inside it.'
         $nm = 0; foreach ($o in $set.Items) { if ($o.Remove) { $nm++ } }
-        $sp.BtnMarked.Text = "Delete the $nm marked cop$(if ($nm -eq 1) { 'y' } else { 'ies' }) now"; $sp.BtnMarked.Visible = ($nm -gt 0)
+        $sp.BtnMarked.Text = "Delete the $nm marked cop$(if ($nm -eq 1) { 'y' } else { 'ies' }) now"; $sp.BtnMarked.Visible = ($nm -gt 0); $sp.BtnSafety.Visible = $true
         $w = [math]::Max($pn.ClientSize.Width - [int](10 * $sc), [int](560 * $sc)); $y = [int](4 * $sc)
         foreach ($it in $set.Items) {
             $rem = [bool]$it.Remove; $isB = ($it -eq $script:SpBrowse)
@@ -1563,7 +2348,10 @@ function Refresh-Cards {
             $inf = New-Object Windows.Forms.Label; $inf.AutoSize = $false; $inf.AutoEllipsis = $true; $inf.UseMnemonic = $false
             $inf.Location = New-Object Drawing.Point([int](88 * $sc), [int](26 * $sc)); $inf.Size = New-Object Drawing.Size(($w - [int](88 * $sc) - $rx), [int](20 * $sc)); $inf.Anchor = 'Top, Left, Right'
             $inf.ForeColor = $script:UiMuted; $inf.Tag = $it; $inf.TextAlign = 'MiddleLeft'
-            $inf.Text = "modified $($it.Modified.ToLocalTime().ToString('yyyy-MM-dd HH:mm'))$(if ($isB) { '   -   contents shown below' })"
+            $sa = $script:SafetyCache[(Get-NormPath $it.Path)]
+            $inf.Text = $(if ($sa) { "Safety $($sa.Safety)% $($sa.Class)  |  confidence $($sa.Confidence)%  |  " } else { 'Safety: checking...  |  ' }) + "modified $($it.Modified.ToLocalTime().ToString('yyyy-MM-dd HH:mm'))$(if ($isB) { '  |  contents shown below' })"
+            if ($sa) { $inf.ForeColor = (Get-ScoreColor $sa.Safety) }
+            if (-not $rem -and @($set.Items | Where-Object { $_.Remove }).Count -gt 0) { $inf.Text = "This copy stays - only the marked copies are scored  |  modified $($it.Modified.ToLocalTime().ToString('yyyy-MM-dd HH:mm'))$(if ($isB) { '  |  contents shown below' })"; $inf.ForeColor = $script:UiMuted }
             $chk = New-Object Windows.Forms.CheckBox; $chk.Text = 'Delete this copy'; $chk.AutoSize = $false; $chk.Size = New-Object Drawing.Size([int](150 * $sc), [int](24 * $sc))
             $chk.Location = New-Object Drawing.Point(($w - $rx + [int](4 * $sc)), [int](12 * $sc)); $chk.Anchor = 'Top, Right'; $chk.Checked = $rem; $chk.Tag = $it; $chk.BackColor = $card.BackColor
             $btn = New-Btn 'Keep only this one'; $btn.MinimumSize = New-Object Drawing.Size(0, 0); $btn.AutoSize = $false; $btn.Size = New-Object Drawing.Size([int](184 * $sc), [int](30 * $sc))
@@ -1581,6 +2369,7 @@ function Refresh-Cards {
         }
         $pn.AutoScrollMinSize = New-Object Drawing.Size(0, ($y + [int](4 * $sc)))
         $pn.AutoScrollPosition = New-Object Drawing.Point(0, $keepY)
+        Update-SafeLine; Place-SetButtons
     } finally { $pn.ResumeLayout() }
 }
 
@@ -1600,6 +2389,8 @@ function Set-CopyRemove($it, [bool]$on) {
 function Remove-CopiesNow($items) {
     $set = $script:SpCur
     if (-not $set -or $script:Scanning -or -not $items -or $items.Count -eq 0) { if ($script:Scanning) { $lblStatus.Text = 'Wait for the scan to finish before deleting.' }; return }
+    foreach ($o in $items) { if ([IO.Directory]::Exists($o.Path)) { [void](Get-SafetyAssessment $o $set) } }
+    if (-not (Confirm-RiskyRemovals (Get-RiskyRemovals $items $set))) { return }
     $mode = if ($rbMove.Checked) { 'move' } elseif ($rbRecycle.Checked) { 'recycle' } else { 'delete' }
     $what = switch ($mode) { 'move' { "MOVED to the quarantine folder:`n$($txtQ.Text)  (undoable)" } 'recycle' { 'sent to the RECYCLE BIN' } default { 'PERMANENTLY DELETED (cannot be undone)' } }
     $left = 0; foreach ($o in $set.Items) { if ($items -notcontains $o) { $left++ } }
@@ -1698,7 +2489,7 @@ function Get-InsideCount([string]$root) {
                 if (([IO.File]::GetAttributes($s) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
                 $dirs++; $stack.Push($s)
             }
-        } catch { }
+        } catch { Write-ErrLog $_ }
     }
     return [pscustomobject]@{ Files = $files; Dirs = $dirs; Done = $done }
 }
@@ -1742,7 +2533,7 @@ function Show-Embedded($path, [bool]$isDir) {
     try {
         if ($isDir) { $meta = "Folder, changed $((New-Object IO.DirectoryInfo($path)).LastWriteTime.ToString('yyyy-MM-dd HH:mm'))" }
         else { $fi = New-Object IO.FileInfo($path); $meta = "$(Format-Size $fi.Length)  -  modified $($fi.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))" }
-    } catch { }
+    } catch { Write-ErrLog $_ }
     $set = $script:SpCur
     if ($set) { $kept = $null; foreach ($o in $set.Items) { if (-not $o.Remove) { $kept = $o; break } }; $meta += "`r`nIdentical in all $($set.Items.Count) copies.`r`n" + $(if ($kept) { "Kept at: $($kept.Path)" } else { 'No copy is marked to keep.' }) }
     $sp.PvMeta.Text = ''; $sp.PvMeta.Visible = $false   # the date now shows in the blue panel; this text block is gone
@@ -1750,7 +2541,7 @@ function Show-Embedded($path, [bool]$isDir) {
     try {
         if (-not ([IO.File]::Exists($path) -or [IO.Directory]::Exists($path))) { Set-PvPane 'note' 'This file is not there any more.'; return }
         $kind = $(if ($isDir) { 'folder' } else { Get-PvKind $path $false })
-        if ($kind -eq 'sniff') { $t = ''; $isT = $false; try { $t = Read-PvText $path ([ref]$isT) } catch { }; if ($isT) { $sp.PvTxt.Text = $t; Set-PvPane 'text'; return } else { $kind = 'binary' } }
+        if ($kind -eq 'sniff') { $t = ''; $isT = $false; try { $t = Read-PvText $path ([ref]$isT) } catch { Write-ErrLog $_ }; if ($isT) { $sp.PvTxt.Text = $t; Set-PvPane 'text'; return } else { $kind = 'binary' } }
         switch ($kind) {
             'folder' { Set-PvPane 'note' 'Folder. Open it in the blue panel to see what is inside.' }
             'image' {
@@ -1797,7 +2588,7 @@ function Add-SetsPanel {
     $sizeInit = { param($s, $e)   # first time the pane has a real size: place the splitter at its planned share
         if ($s.Tag -is [double] -and $s.Tag -gt 0) {
             $total = $(if ($s.Orientation -eq 'Vertical') { $s.Width } else { $s.Height })
-            if ($total -gt 300) { try { $s.SplitterDistance = [int]($total * $s.Tag); $s.Tag = 0.0 } catch { } }
+            if ($total -gt 300) { try { $s.SplitterDistance = [int]($total * $s.Tag); $s.Tag = 0.0 } catch { Write-ErrLog $_ } }
         }
     }
     $mkSplit = { param($orient, $share) $c = New-Object Windows.Forms.SplitContainer; $c.Dock = 'Fill'; $c.Orientation = $orient; $c.SplitterWidth = [int](6 * $sc); $c.Tag = [double]$share; $c.Add_SizeChanged($sizeInit); Style-Split $c; $c }
@@ -1807,22 +2598,22 @@ function Add-SetsPanel {
     $root.Panel2.Controls.Add($split2); $split2.Panel2.Controls.Add($split3); $sp.Splits = @($root, $split2, $split3)
 
     # left: header + list
-    $lb = New-Object Windows.Forms.ListBox; $lb.Dock = 'Fill'; $lb.DrawMode = 'OwnerDrawFixed'; $lb.IntegralHeight = $false; $lb.BorderStyle = 'None'
+    $lb = New-Object Windows.Forms.ListBox; $lb.Dock = 'Fill'; $lb.DrawMode = 'OwnerDrawFixed'; $lb.IntegralHeight = $false; $lb.BorderStyle = 'None'; [void][Windows.Forms.Control].GetProperty('DoubleBuffered', [Reflection.BindingFlags]'NonPublic,Instance').SetValue($lb, $true)
     $lbHost = New-Object Windows.Forms.Panel; $lbHost.Dock = 'Fill'; $lbHost.BackColor = $script:UiPanel; $lbHost.Padding = New-Object Windows.Forms.Padding([int](5 * $sc)); $lbHost.Controls.Add($lb); Set-Round $lbHost 12 $script:UiLine
     $mkHost = { param($ctl, $y) $h = New-Object Windows.Forms.Panel; $h.Name = 'rh'; $h.BackColor = $script:UiPanel; $h.Location = New-Object Drawing.Point([int](2 * $sc), [int]($y * $sc)); $h.Size = New-Object Drawing.Size([int](100 * $sc), [int](36 * $sc)); $h.Anchor = 'Top, Left, Right'; $h.Padding = New-Object Windows.Forms.Padding([int](10 * $sc), [int](7 * $sc), [int](8 * $sc), [int](4 * $sc)); $ctl.Dock = 'Fill'; $h.Controls.Add($ctl); Set-Round $h 9 $script:UiLine; $h }
     $sp.Lb = $lb
-    $hd = New-Object Windows.Forms.Panel; $hd.Dock = 'Top'; $hd.Height = [int](190 * $sc)
+    $hd = New-Object Windows.Forms.Panel; $hd.Dock = 'Top'; $hd.Height = [int](216 * $sc)
     $mkl = { param($t, $y, $h, $bold) $l = New-Object Windows.Forms.Label; $l.Text = $t; $l.AutoSize = $false; $l.Location = New-Object Drawing.Point([int](2 * $sc), [int]($y * $sc)); $l.Size = New-Object Drawing.Size([int](100 * $sc), [int]($h * $sc)); $l.Anchor = 'Top, Left, Right'; $l.UseMnemonic = $false; if ($bold) { $l.Font = New-Object Drawing.Font('Segoe UI', 11, [Drawing.FontStyle]::Bold) }; $l }
     $l1 = & $mkl 'Duplicate folder sets' 2 24 $true
     $tkF = New-Tick; $tkF.Location = New-Object Drawing.Point([int](2 * $sc), [int](4 * $sc)); $l1.Location = New-Object Drawing.Point([int](24 * $sc), [int](2 * $sc)); $tip.SetToolTip($tkF, 'Select all duplicates (the oldest copy of each is kept). Click again to clear every selection.')
     $l2 = & $mkl 'One row per folder that exists in several places.' 28 38 $false; $l2.ForeColor = $script:UiMuted
-    $l3 = & $mkl 'Search a word in the path' 62 20 $false
+    $l3 = & $mkl 'Search a word in the path' 30 20 $false
     $sp.Search = New-Object Windows.Forms.TextBox; $sp.Search.BorderStyle = 'None'; $sp.Search.Width = [int](100 * $sc)
-    $l4 = & $mkl 'Sort by' 126 20 $false
+    $l4 = & $mkl 'Sort by' 92 20 $false
     $sp.Sort = New-Object Windows.Forms.ComboBox; $sp.Sort.DropDownStyle = 'DropDownList'; $sp.Sort.FlatStyle = 'Flat'; $sp.Sort.Width = [int](100 * $sc)
-    [void]$sp.Sort.Items.AddRange(@('Space you free (largest first)', 'Name (A to Z)', 'Number of copies', 'Date modified (newest first)')); $sp.Sort.SelectedIndex = 0
+    [void]$sp.Sort.Items.AddRange(@('Space you free (largest first)', 'Name (A to Z)', 'Number of copies', 'Date modified (newest first)', 'Safest first, then largest')); $sp.Sort.SelectedIndex = 4
     # the sort box is drawn by hand (round, flat, same colours as the rest); the combo box above only keeps the value and fires the change event
-    $sortHost = New-Object Windows.Forms.Panel; $sortHost.Name = 'rh'; $sortHost.BackColor = $script:UiPanel; $sortHost.Location = New-Object Drawing.Point([int](2 * $sc), [int](148 * $sc)); $sortHost.Size = New-Object Drawing.Size([int](100 * $sc), [int](36 * $sc)); $sortHost.Anchor = 'Top, Left, Right'; $sortHost.Cursor = [Windows.Forms.Cursors]::Hand
+    $sortHost = New-Object Windows.Forms.Panel; $sortHost.Name = 'rh'; $sortHost.BackColor = $script:UiPanel; $sortHost.Location = New-Object Drawing.Point([int](2 * $sc), [int](114 * $sc)); $sortHost.Size = New-Object Drawing.Size([int](100 * $sc), [int](36 * $sc)); $sortHost.Anchor = 'Top, Left, Right'; $sortHost.Cursor = [Windows.Forms.Cursors]::Hand
     Set-Round $sortHost 9 $script:UiLine
     $sortHost.Add_Paint({ param($s, $e)
         $sc2 = (Get-Sc); $txt = [string]$script:SP.Sort.SelectedItem
@@ -1831,11 +2622,34 @@ function Add-SetsPanel {
         $e.Graphics.DrawLines($pn, @((New-Object Drawing.Point(($cx - $d), ($cy - [int]($d / 2)))), (New-Object Drawing.Point($cx, ($cy + [int]($d / 2)))), (New-Object Drawing.Point(($cx + $d), ($cy - [int]($d / 2)))))); $pn.Dispose()
     })
     $sortMenu = New-Object Windows.Forms.ContextMenuStrip; $sortMenu.BackColor = $script:UiPanel; $sortMenu.ForeColor = $script:UiText; $sortMenu.ShowImageMargin = $false; $sortMenu.Font = $script:ListFont
-    foreach ($si in 0..3) { $mi = $sortMenu.Items.Add([string]$sp.Sort.Items[$si]); $mi.Tag = $si; $mi.BackColor = $script:UiPanel; $mi.ForeColor = $script:UiText; $mi.Add_Click({ param($s, $e) $script:SP.Sort.SelectedIndex = [int]$s.Tag }) }
+    foreach ($si in 4, 0, 1, 2, 3) { $mi = $sortMenu.Items.Add([string]$sp.Sort.Items[$si]); $mi.Tag = $si; $mi.BackColor = $script:UiPanel; $mi.ForeColor = $script:UiText; $mi.Add_Click({ param($s, $e) $script:SP.Sort.SelectedIndex = [int]$s.Tag }) }
     $script:SortMenu = $sortMenu; $sortHost.Add_Click({ param($s, $e) $script:SortMenu.Width = $s.Width; $script:SortMenu.Show($s, (New-Object Drawing.Point(0, $s.Height))) })
     $sp.Sort.Add_SelectedIndexChanged({ $script:SP.SortHost.Invalidate() }); $sp.SortHost = $sortHost
     $sp.Count = New-Object Windows.Forms.Label; $sp.Count.AutoSize = $false; $sp.Count.Dock = 'Bottom'; $sp.Count.Height = [int](22 * $sc); $sp.Count.ForeColor = $script:UiMuted; $sp.Count.Text = 'No scan yet.'
-    $hd.Controls.Add($tkF); $hd.Controls.AddRange(@($l1, $l2, $l3, (& $mkHost $sp.Search 84), $l4, $sortHost))
+    $l5 = & $mkl 'Deletion safety' 156 20 $false
+    $safeHost = New-Object Windows.Forms.Panel; $safeHost.Name = 'rh'; $safeHost.BackColor = $script:UiPanel; $safeHost.Location = New-Object Drawing.Point([int](2 * $sc), [int](178 * $sc)); $safeHost.Size = New-Object Drawing.Size([int](100 * $sc), [int](36 * $sc)); $safeHost.Anchor = 'Top, Left, Right'; $safeHost.Cursor = [Windows.Forms.Cursors]::Hand
+    Set-Round $safeHost 9 $script:UiLine
+    $safeHost.Add_Paint({ param($s, $e)
+        $sc2 = (Get-Sc); $txt = [string]$script:SafetyFilterNames[$script:SafetyFilter]
+        [Windows.Forms.TextRenderer]::DrawText($e.Graphics, $txt, $s.Font, (New-Object Drawing.Rectangle([int](10 * $sc2), 0, ($s.Width - [int](40 * $sc2)), $s.Height)), $script:UiText, [Windows.Forms.TextFormatFlags]'Left, VerticalCenter, EndEllipsis, NoPrefix')
+        $e.Graphics.SmoothingMode = 'AntiAlias'; $pn = New-Object Drawing.Pen $script:UiMuted, ([single](1.8 * $sc2 / 1.5)); $cx = $s.Width - [int](20 * $sc2); $cy = [int]($s.Height / 2); $d = [int](4 * $sc2)
+        $e.Graphics.DrawLines($pn, @((New-Object Drawing.Point(($cx - $d), ($cy - [int]($d / 2)))), (New-Object Drawing.Point($cx, ($cy + [int]($d / 2)))), (New-Object Drawing.Point(($cx + $d), ($cy - [int]($d / 2)))))); $pn.Dispose()
+    })
+    $safeMenu = New-Object Windows.Forms.ContextMenuStrip; $safeMenu.BackColor = $script:UiPanel; $safeMenu.ForeColor = $script:UiText; $safeMenu.ShowImageMargin = $false; $safeMenu.Font = $script:ListFont
+    foreach ($si in 0..6) { $mi = $safeMenu.Items.Add([string]$script:SafetyFilterNames[$si]); $mi.Tag = $si; $mi.BackColor = $script:UiPanel; $mi.ForeColor = $script:UiText; $mi.Add_Click({ param($s, $e) $script:SafetyFilter = [int]$s.Tag; $script:SP.SafeHost.Invalidate(); $script:SpTimer.Stop(); $script:SpTimer.Start() }) }
+    [void]$safeMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
+    $miAll = $safeMenu.Items.Add('Investigate all sets now, largest first (Esc stops)'); $miAll.BackColor = $script:UiPanel; $miAll.ForeColor = $script:UiText; $miAll.Add_Click({ Invoke-AssessAll })
+    $script:SafeMenu = $safeMenu; $safeHost.Add_Click({ param($s, $e) $script:SafeMenu.Width = $s.Width; $script:SafeMenu.Show($s, (New-Object Drawing.Point(0, $s.Height))) }); $sp.SafeHost = $safeHost
+    $hd.Controls.Add($tkF); $hd.Controls.AddRange(@($l1, $l3, (& $mkHost $sp.Search 52), $l4, $sortHost, $l5, $safeHost))
+    # column headline over the list: the safety score is named once here, rows only show the number
+    $lbHead = New-Object Windows.Forms.Panel; $lbHead.Dock = 'Top'; $lbHead.Height = [int](26 * $sc); $lbHead.BackColor = $script:UiPanel
+    $lbHead.Add_Paint({ param($s, $e)
+        $sc2 = (Get-Sc); $sw2 = [int](118 * $sc2); $f2 = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold)
+        [Windows.Forms.TextRenderer]::DrawText($e.Graphics, 'Folder set', $f2, (New-Object Drawing.Rectangle([int](6 * $sc2), 0, ($s.Width - $sw2 - [int](14 * $sc2)), $s.Height)), $script:UiMuted, [Windows.Forms.TextFormatFlags]'Left, VerticalCenter, NoPrefix')
+        [Windows.Forms.TextRenderer]::DrawText($e.Graphics, 'Safe to keep one', $f2, (New-Object Drawing.Rectangle(($s.Width - $sw2 - [int](4 * $sc2)), 0, $sw2, $s.Height)), $script:UiMuted, [Windows.Forms.TextFormatFlags]'Right, VerticalCenter, NoPrefix')
+        $pn2 = New-Object Drawing.Pen $script:UiLine; $e.Graphics.DrawLine($pn2, 0, ($s.Height - 1), $s.Width, ($s.Height - 1)); $pn2.Dispose(); $f2.Dispose()
+    })
+    $lbHost.Controls.Add($lbHead)
     $root.Panel1.Controls.Add($lbHost); $root.Panel1.Controls.Add($sp.Count); $root.Panel1.Controls.Add($hd)
     $hd.Add_SizeChanged({ param($s, $e) foreach ($c in $s.Controls) { if ($c.Name -ne 'tick') { $c.Width = $s.ClientSize.Width - [int](4 * (Get-Sc)) } } })
     $lb.Add_DrawItem({
@@ -1851,7 +2665,12 @@ function Add-SetsPanel {
         $c1 = $(if ($sel) { $script:UiOnAccent } else { $script:UiText })
         $c2 = $(if ($sel) { $script:UiOnAccent } else { $script:UiMuted })
         $b = $e.Bounds; $h1 = [int]($script:ListBold.GetHeight()) + 4; $fl = [Windows.Forms.TextFormatFlags]'EndEllipsis, NoPrefix, Left, VerticalCenter'
-        [Windows.Forms.TextRenderer]::DrawText($e.Graphics, [SetUtil]::Name($set), $script:ListBold, (New-Object Drawing.Rectangle(($b.X + 6), ($b.Y + 3), ($b.Width - 10), $h1)), $c1, $fl)
+        $ts = Get-SetScore $set; $sw = [int](118 * (Get-Sc))
+        if ($ts -and -not $sel) { $c1 = Get-ScoreColor $ts.Score; $c2 = $c1 }   # an investigated folder: the whole line takes the score colour (selected rows stay blue)
+        $stxt = $(if ($ts) { "$($ts.Score)%" } else { '--' })
+        $scol = $(if ($sel) { $script:UiOnAccent } elseif ($ts) { Get-ScoreColor $ts.Score } else { $script:UiMuted })
+        [Windows.Forms.TextRenderer]::DrawText($e.Graphics, $stxt, $script:ListBold, (New-Object Drawing.Rectangle(($b.Right - $sw - 4), ($b.Y + 3), $sw, $h1)), $scol, [Windows.Forms.TextFormatFlags]'NoPrefix, Right, VerticalCenter')
+        [Windows.Forms.TextRenderer]::DrawText($e.Graphics, [SetUtil]::Name($set), $script:ListBold, (New-Object Drawing.Rectangle(($b.X + 6), ($b.Y + 3), ($b.Width - 14 - $sw), $h1)), $c1, $fl)
         [Windows.Forms.TextRenderer]::DrawText($e.Graphics, (Get-SetLine $set), $script:SP.SubFont, (New-Object Drawing.Rectangle(($b.X + 6), ($b.Y + 3 + $h1), ($b.Width - 10), ($b.Height - $h1 - 4))), $c2, $fl)
     })
     $lb.Add_SelectedIndexChanged({ param($s, $e) if ($script:SpBusy) { return }; if ($s.SelectedItem) { Show-SetDetail $s.SelectedItem } })
@@ -1868,10 +2687,17 @@ function Add-SetsPanel {
     $sp.BtnMarked.Size = New-Object Drawing.Size([int](300 * $sc), [int](28 * $sc)); $sp.BtnMarked.ForeColor = $script:SpDelFg; $sp.BtnMarked.Visible = $false; $sp.BtnMarked.Font = New-Object Drawing.Font('Segoe UI', 9)
     $tip.SetToolTip($sp.BtnMarked, 'Delete every copy of this set that is marked DELETE, right now, using the action chosen at the bottom')
     $sp.SetHd.Controls.Add($sp.BtnMarked)
-    $sp.SetHd.Add_SizeChanged({ param($s, $e) $b = $script:SP.BtnMarked; $b.Location = New-Object Drawing.Point(($s.ClientSize.Width - $b.Width - 8), 0) })
+    $sp.BtnSafety = New-Btn 'Safety review...'; $sp.BtnSafety.MinimumSize = New-Object Drawing.Size(0, 0); $sp.BtnSafety.AutoSize = $false; $sp.BtnSafety.Size = New-Object Drawing.Size([int](190 * $sc), [int](28 * $sc)); $sp.BtnSafety.Font = New-Object Drawing.Font('Segoe UI', 9)
+    $tip.SetToolTip($sp.BtnSafety, 'How safe is it to delete each copy? Shows the evidence, the score and what could go wrong. Read-only: nothing is changed.')
+    $sp.SetHd.Controls.Add($sp.BtnSafety); $sp.BtnSafety.Add_Click({ Show-SafetyReview })
+    $script:AaTimer = New-Object Windows.Forms.Timer; $script:AaTimer.Interval = 30; $script:AaTimer.Add_Tick({ Step-AutoAssess })
+    $script:SafetyTimer = New-Object Windows.Forms.Timer; $script:SafetyTimer.Interval = 700
+    $script:SafetyTimer.Add_Tick({ $script:SafetyTimer.Stop(); try { Invoke-SetAssess } catch { Write-ErrLog $_ } })
+    $sp.SetHd.Add_SizeChanged({ Place-SetButtons })
     $sp.BtnMarked.Add_Click({ $set = $script:SpCur; if (-not $set) { return }; $m = New-Object 'System.Collections.Generic.List[object]'; foreach ($o in $set.Items) { if ($o.Remove) { $m.Add($o) } }; if ($m.Count) { Remove-CopiesNow $m.ToArray() } })
     $sp.SetHint = New-Object Windows.Forms.Label; $sp.SetHint.Dock = 'Top'; $sp.SetHint.AutoSize = $false; $sp.SetHint.Height = [int](24 * $sc); $sp.SetHint.ForeColor = $script:UiMuted; $sp.SetHint.TextAlign = 'MiddleLeft'
-    $split2.Panel1.Controls.Add($sp.Cards); $split2.Panel1.Controls.Add($sp.SetHint); $split2.Panel1.Controls.Add($sp.SetHd)
+    $sp.SafeLine = New-Object Windows.Forms.Label; $sp.SafeLine.Dock = 'Top'; $sp.SafeLine.AutoSize = $false; $sp.SafeLine.Height = [int](24 * $sc); $sp.SafeLine.ForeColor = $script:UiAccent; $sp.SafeLine.TextAlign = 'MiddleLeft'; $sp.SafeLine.AutoEllipsis = $true; $sp.SafeLine.UseMnemonic = $false
+    $split2.Panel1.Controls.Add($sp.Cards); $split2.Panel1.Controls.Add($sp.SafeLine); $split2.Panel1.Controls.Add($sp.SetHint); $split2.Panel1.Controls.Add($sp.SetHd)
 
     # middle bottom: the blue "inside" panel
     $outer = New-Object Windows.Forms.Panel; $outer.Dock = 'Fill'; $outer.BackColor = $script:SpBlueLine; $outer.Padding = New-Object Windows.Forms.Padding([int](2 * $sc))
@@ -1948,11 +2774,11 @@ function Add-SetsPanel {
         if ($n -and $n.Tag) { Show-Embedded $n.Tag.Path ([bool]$n.Tag.Dir) }
     })
     $tv.Add_AfterSelect({ $script:SpPvTimer.Stop(); $script:SpPvTimer.Start(); if ($script:Pv -and $script:Pv.Form.Visible) { $script:PvTimer.Stop(); $script:PvTimer.Start() } })
-    $tv.Add_NodeMouseDoubleClick({ param($s, $e) $t = $e.Node.Tag; if ($t -and -not $t.Dir) { try { [void][Diagnostics.Process]::Start($t.Path) } catch { [void][Windows.Forms.MessageBox]::Show("Could not open:`n$($t.Path)`n`n$($_.Exception.Message)", 'DupCleaner') } } })
+    $tv.Add_NodeMouseDoubleClick({ param($s, $e) $t = $e.Node.Tag; if ($t -and -not $t.Dir) { Open-File $t.Path } })
     $tv.Add_MouseDown({ param($s, $e) if ($e.Button -eq 'Right') { $h = $s.GetNodeAt($e.X, $e.Y); if ($h) { $s.SelectedNode = $h } } })
-    $tv.Add_MouseWheel({ param($s, $e) if ([Windows.Forms.Control]::ModifierKeys -band [Windows.Forms.Keys]::Control) { try { ([Windows.Forms.HandledMouseEventArgs]$e).Handled = $true } catch { }; Set-ListFont ($script:ListFontSize + [math]::Sign($e.Delta)) } })
+    $tv.Add_MouseWheel({ param($s, $e) if ([Windows.Forms.Control]::ModifierKeys -band [Windows.Forms.Keys]::Control) { try { ([Windows.Forms.HandledMouseEventArgs]$e).Handled = $true } catch { Write-ErrLog $_ }; Set-ListFont ($script:ListFontSize + [math]::Sign($e.Delta)) } })
     $cm = New-Object Windows.Forms.ContextMenuStrip
-    $mOpen = $cm.Items.Add('Open'); $mOpen.Add_Click({ $n = $script:SP.Tv.SelectedNode; if ($n -and $n.Tag) { try { [void][Diagnostics.Process]::Start($n.Tag.Path) } catch { } } })
+    $mOpen = $cm.Items.Add('Open'); $mOpen.Add_Click({ $n = $script:SP.Tv.SelectedNode; if ($n -and $n.Tag) { Open-File $n.Tag.Path } })
     $mExp = $cm.Items.Add('Show in Explorer'); $mExp.Add_Click({ $n = $script:SP.Tv.SelectedNode; if ($n -and $n.Tag) { Start-Process explorer.exe -ArgumentList "/select,`"$($n.Tag.Path)`"" } })
     $mBig = $cm.Items.Add('Bigger preview'); $mBig.Add_Click({ Show-PreviewSelected })
     $cm.Add_Opening({ param($s, $e) $n = $script:SP.Tv.SelectedNode; if (-not $n -or -not $n.Tag) { $e.Cancel = $true } })
@@ -1977,22 +2803,32 @@ function Add-SetsPanel {
         $saved = [int64]$script:SavedTotal; $rest = 0L; foreach ($d in $script:ChartData) { $rest += $d.Bytes }
         $g.DrawString('Space saved', $bold, $txt, $pad, $pad)
         $top = $pad + [int]($bold.Height * 1.6)
-        $size = [Math]::Max(60, [Math]::Min($w - 2 * $pad, [int](($h - $top) * 0.62))); $x = [int](($w - $size) / 2)
-        $tot = $saved + $rest
+        $size = [Math]::Max(60, [Math]::Min($w - 2 * $pad, [int](($h - $top) * 0.5))); $x = [int](($w - $size) / 2)
+        $nowT = [Environment]::TickCount
+        if (($nowT - $script:BucketAt) -gt 1000 -or ($nowT - $script:BucketAt) -lt 0) {   # space that keeping one copy frees, by score colour of the set
+            $script:BucketAt = $nowT; $bk = @(0L, 0L, 0L)
+            foreach ($st in $script:Results['Folder']) { $q = $script:SetPlan[$st]; if ($q) { $fr = [int64]$st.Size * ($st.Items.Count - 1); if ($q.Score -gt 90) { $bk[0] += $fr } elseif ($q.Score -ge 80) { $bk[1] += $fr } else { $bk[2] += $fr } } }
+            $script:Buckets = $bk
+        }
+        $bk = $script:Buckets; $scored = $bk[0] + $bk[1] + $bk[2]; $unscored = [Math]::Max(0L, $rest - $scored)
+        $cSaved = [Drawing.Color]::FromArgb(140, 110, 190)
+        $parts = @(@($cSaved, 'Saved (removed so far)', $saved), @((Get-ScoreColor 95), 'Safe to free (above 90%)', $bk[0]), @((Get-ScoreColor 85), 'Check first (80-90%)', $bk[1]), @((Get-ScoreColor 50), 'Risky (below 80%)', $bk[2]), @($script:UiAccent, 'Not yet scored', $unscored))
+        $tot = 0L; foreach ($pt in $parts) { $tot += [int64]$pt[2] }
         if ($tot -le 0) { $gb = New-Object Drawing.SolidBrush $script:UiLine; $g.FillEllipse($gb, $x, $top, $size, $size); $gb.Dispose() }
         else {
-            $sw1 = 360.0 * $saved / $tot
-            $b1 = New-Object Drawing.SolidBrush $script:UiKeepFg; $b2 = New-Object Drawing.SolidBrush $script:UiAccent
-            if ($saved -le 0) { $g.FillEllipse($b2, $x, $top, $size, $size) } elseif ($rest -le 0) { $g.FillEllipse($b1, $x, $top, $size, $size) }
-            else { $g.FillPie($b1, $x, $top, $size, $size, [single]-90, [single]$sw1); $g.FillPie($b2, $x, $top, $size, $size, [single](-90 + $sw1), [single](360 - $sw1)) }
-            $b1.Dispose(); $b2.Dispose()
+            $ang = -90.0; $nz = @($parts | Where-Object { [int64]$_[2] -gt 0 })
+            foreach ($pt in $nz) {
+                $pb = New-Object Drawing.SolidBrush $pt[0]
+                if ($nz.Count -eq 1) { $g.FillEllipse($pb, $x, $top, $size, $size) } else { $sw = 360.0 * [int64]$pt[2] / $tot; $g.FillPie($pb, $x, $top, $size, $size, [single]$ang, [single]$sw); $ang += $sw }
+                $pb.Dispose()
+            }
         }
         $hole = [int]($size * 0.72); $hb = New-Object Drawing.SolidBrush $s.BackColor; $g.FillEllipse($hb, ($x + [int](($size - $hole) / 2)), ($top + [int](($size - $hole) / 2)), $hole, $hole); $hb.Dispose()
         $sf = New-Object Drawing.StringFormat; $sf.Alignment = 'Center'; $sf.LineAlignment = 'Center'; $cy = $top + $size / 2
         $g.DrawString((Format-Size $saved), $big, $txt, [single]($x + $size / 2), [single]($cy - $big.Height * 0.3), $sf)
         $sm = New-Object Drawing.Font($s.Font.FontFamily, ($s.Font.Size * 0.8)); $g.DrawString('saved so far', $sm, $dim, [single]($x + $size / 2), [single]($cy + $big.Height * 0.55), $sf); $sm.Dispose()
         $ly = $top + $size + [int](14 * $k)
-        foreach ($row in @(@($script:UiKeepFg, 'Saved (removed so far)', $saved), @($script:UiAccent, 'Still can be freed', $rest))) {
+        foreach ($row in $parts) {
             if ($ly -gt $h - $s.Font.Height) { break }
             $lb = New-Object Drawing.SolidBrush $row[0]; $g.FillRectangle($lb, $pad, $ly + 4, [int](12 * $k), [int](12 * $k)); $lb.Dispose()
             $g.DrawString([string]$row[1], $s.Font, $txt, [single]($pad + 20 * $k), [single]$ly)
@@ -2009,7 +2845,7 @@ function Add-SetsPanel {
         $b.Add_Click({
             param($s, $e) $p = $script:SP.PvPath; if (-not $p) { return }
             switch ($s.Tag) {
-                'o' { try { [void][Diagnostics.Process]::Start($p) } catch { [void][Windows.Forms.MessageBox]::Show("Could not open:`n$p`n`n$($_.Exception.Message)", 'DupCleaner') } }
+                'o' { Open-File $p }
                 'e' { Start-Process explorer.exe -ArgumentList "/select,`"$p`"" }
                 'b' { Show-Preview $p ([bool]$script:SP.PvIsDir) '' }
             }
@@ -2028,6 +2864,28 @@ function Add-SetsPanel {
     Set-SpFonts
 }
 Add-SetsPanel
+# a click anywhere outside the files panel (the blue INSIDE panel) unselects the file and clears its preview; its own buttons and the preview pane do not count as outside
+Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @"
+using System;
+using System.Windows.Forms;
+public class ClickWatch : IMessageFilter {
+    public Action<IntPtr> Down;
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern short GetAsyncKeyState(int k);
+    public static bool EscDown() { return (GetAsyncKeyState(0x1B) & 0x8000) != 0; }
+    public bool PreFilterMessage(ref Message m) { if (m.Msg == 0x201 && Down != null) { try { Down(m.HWnd); } catch { } } return false; }
+}
+"@
+function Invoke-OutsideClick($h) {
+    $sp = $script:SP; if (-not $sp -or -not $sp.Tv -or -not $sp.Tv.SelectedNode -or -not $sp.Tv.Visible) { return }
+    $c = [Windows.Forms.Control]::FromHandle($h); if (-not $c) { return }
+    $panel = $sp.Tv.Parent.Parent
+    for ($x = $c; $x; $x = $x.Parent) { if ($x -eq $form) { break }; if (-not $x.Parent -and $x -ne $form) { return } }   # menus and other windows are not outside
+    for ($x = $c; $x; $x = $x.Parent) { if ($x -eq $panel -or $x -eq $sp.PvArea -or $x -eq $sp.PvBtns) { return } }
+    $script:SpPvTimer.Stop(); $sp.Tv.SelectedNode = $null; Show-Embedded $null $false
+}
+$script:ClickWatch = New-Object ClickWatch
+$script:ClickWatch.Down = [Action[IntPtr]]{ param($h) Invoke-OutsideClick $h }
+[Windows.Forms.Application]::AddMessageFilter($script:ClickWatch)
 
 # ---- bottom: summary, keep buttons, action, apply/undo
 $bottom = New-Table 2 3
@@ -2150,7 +3008,7 @@ function Update-Chart($kind, $g) {
         if ($rest -gt 0) { $data += [pscustomobject]@{ Label = "$($sorted.Count - 6) other sets"; Bytes = $rest } }
         $script:ChartTitle = 'by folder set'
     }
-    $script:ChartData = $data; try { if ($script:SP -and $script:SP.PvDonut) { $script:SP.PvDonut.Invalidate() } } catch { }
+    $script:ChartData = $data; try { if ($script:SP -and $script:SP.PvDonut) { $script:SP.PvDonut.Invalidate() } } catch { Write-ErrLog $_ }
     $script:SumCache[$kind] = @{ N = $tn; B = $tb; Data = $data; Title = $script:ChartTitle }
     $chart.Invalidate()
     $script:ChartGap = [math]::Max(500L, 8L * ($script:ChartClock.ElapsedMilliseconds - $chartStart))   # back off as results grow
@@ -2170,7 +3028,7 @@ function Update-Summary([bool]$reuse = $false) {
     if ($null -eq $g) { Update-Ticks $null 0; $lblSum.Text = 'No scan yet.'; $btnApply.Enabled = $false; $script:ChartData = @(); $chart.Invalidate(); return }
     if (-not ($reuse -and $script:SumCache[$kind] -and -not $script:Scanning)) { Update-Chart $kind $g }
     $c = $script:SumCache[$kind]
-    if ($c) { $script:ChartData = $c.Data; $script:ChartTitle = $c.Title; $chart.Invalidate(); try { if ($script:SP -and $script:SP.PvDonut) { $script:SP.PvDonut.Invalidate() } } catch { }; $n = $c.N; $bytes = $c.B }
+    if ($c) { $script:ChartData = $c.Data; $script:ChartTitle = $c.Title; $chart.Invalidate(); try { if ($script:SP -and $script:SP.PvDonut) { $script:SP.PvDonut.Invalidate() } } catch { Write-ErrLog $_ }; $n = $c.N; $bytes = $c.B }
     else { $n = 0; $bytes = 0L }
     $live = if ($script:Scanning) { ' (scan still running - results update live)' } else { '' }
     $flt = $script:FilterText[$kind]
@@ -2530,7 +3388,7 @@ $script:ListDir = Join-Path $env:LOCALAPPDATA 'DupCleaner\saved-lists'
 $script:KeepLists = 8
 function Get-ListInfo([string]$path) {   # reads only the first few KB: lists can be tens of MB
     $fi = Get-Item -LiteralPath $path; $head = ''
-    try { $fs = [IO.File]::OpenRead($path); try { $b = New-Object byte[] 4096; $n = $fs.Read($b, 0, 4096); $head = [Text.Encoding]::UTF8.GetString($b, 0, $n) } finally { $fs.Dispose() } } catch { }
+    try { $fs = [IO.File]::OpenRead($path); try { $b = New-Object byte[] 4096; $n = $fs.Read($b, 0, 4096); $head = [Text.Encoding]::UTF8.GetString($b, 0, $n) } finally { $fs.Dispose() } } catch { Write-ErrLog $_ }
     $saved = if ($head -match '"Saved":"([^"]+)"') { $Matches[1] } else { $fi.LastWriteTime.ToString('yyyy-MM-dd HH:mm') }
     $roots = ''; if ($head -match '"Roots":\[(.*?)\]') { $roots = (($Matches[1] -replace '"', '') -replace '\\\\', '\') -replace ',', '  |  ' }
     [pscustomobject]@{ Path = $fi.FullName; Name = $fi.Name; Saved = $saved; Partial = [bool]($head -match '"Partial":true'); Roots = $roots; SizeMB = [math]::Round($fi.Length / 1MB, 1) }
@@ -2557,7 +3415,7 @@ function Select-ResultsTab {   # open the sub-tab that has duplicates: folders f
         $nI = 0; if ($script:Results['File']) { $nI = $script:Results['File'].Count }
         $i = $(if ($nF -gt 0) { 1 } elseif ($nI -gt 0) { 0 } else { -1 })
         if ($i -ge 0 -and $tabs.SelectedIndex -ne $i) { $tabs.SelectedIndex = $i }
-    } catch { }
+    } catch { Write-ErrLog $_ }
 }function Restore-Session([string]$file = '', [bool]$manual = $false) {
     if (-not $file) { $file = $script:SessionFile }
     if (-not (Test-Path -LiteralPath $file)) { return }
@@ -2599,7 +3457,7 @@ function Select-ResultsTab {   # open the sub-tab that has duplicates: folders f
         Update-Summary; Select-ResultsTab
     } catch {
         Write-CrashLog 'Restore-Session failed' ("$($_.Exception.ToString())`r`n$($_.InvocationInfo.PositionMessage)")
-        try { Copy-Item -LiteralPath $file -Destination ($script:SessionFile + '.failed') -Force } catch { }   # keep the file for diagnosis
+        try { Copy-Item -LiteralPath $file -Destination ($script:SessionFile + '.failed') -Force } catch { Write-ErrLog $_ }   # keep the file for diagnosis
         $lblStatus.Text = "Could not restore the $what. Details are in $script:LogPath"
     } finally { $root.Enabled = $true }
 }
@@ -2609,7 +3467,7 @@ function Show-RestoreListDialog {
     $cands = New-Object 'System.Collections.Generic.List[object]'
     foreach ($d in (Split-Path $script:SessionFile), $script:ListDir) {
         if (Test-Path -LiteralPath $d) {
-            foreach ($f in @(Get-ChildItem -LiteralPath $d -Filter '*.json' -File -ErrorAction SilentlyContinue)) { try { $cands.Add((Get-ListInfo $f.FullName)) } catch { } }
+            foreach ($f in @(Get-ChildItem -LiteralPath $d -Filter '*.json' -File -ErrorAction SilentlyContinue)) { try { $cands.Add((Get-ListInfo $f.FullName)) } catch { Write-ErrLog $_ } }
         }
     }
     $sc = $form.DeviceDpi / 96.0
@@ -2647,7 +3505,7 @@ function Show-RestoreListDialog {
     $pick = $script:PickedList
     if (-not (Test-Path -LiteralPath $pick)) { [void][Windows.Forms.MessageBox]::Show("That file no longer exists:`n$pick", 'DupCleaner'); return }
     # keep the list that is on screen now (as last saved) before replacing it
-    try { if ((Resolve-Path -LiteralPath $pick).Path -ne (Resolve-Path -LiteralPath $script:SessionFile).Path) { Save-ListArchive $script:SessionFile } } catch { }   # the file on disk, never the (possibly empty) screen
+    try { if ((Resolve-Path -LiteralPath $pick).Path -ne (Resolve-Path -LiteralPath $script:SessionFile).Path) { Save-ListArchive $script:SessionFile } } catch { Write-ErrLog $_ }   # the file on disk, never the (possibly empty) screen
     $form.Cursor = [Windows.Forms.Cursors]::WaitCursor
     try { Restore-Session $pick $true } finally { $form.Cursor = [Windows.Forms.Cursors]::Default }
 }
@@ -2690,7 +3548,7 @@ $btnScan.Add_Click({
         $script:Results = @{ File = (New-Object 'System.Collections.Generic.List[object]'); Folder = (New-Object 'System.Collections.Generic.List[object]'); Nested = (New-Object 'System.Collections.Generic.List[object]') }
         foreach ($k in 'File', 'Folder') { $views[$k].Items.Clear(); $views[$k].Groups.Clear(); Reset-Sort $k; Reset-FilterControls $k }
         Set-FilterEnabled $false   # filtering and sorting wait until the scan is over
-        try { Update-Summary } catch { }   # clear the totals and chart of the previous results
+        try { Update-Summary } catch { Write-ErrLog $_ }   # clear the totals and chart of the previous results
         $script:OnGroup = {
             param($kind, $group)
             if ($form.IsDisposed) { return }
@@ -2754,6 +3612,7 @@ $btnApply.Add_Click({
     $n = 0; $bytes = 0L
     foreach ($s in $g) { foreach ($it in $s.Items) { if ($it.Remove) { $n++; $bytes += $it.Length } } }
     if ($n -eq 0) { return }
+    if ($kind -eq 'Folder') { $rm = New-Object System.Collections.ArrayList; foreach ($s in $g) { foreach ($it in $s.Items) { if ($it.Remove) { $a3 = Get-CachedSafety $it $s; if ($a3 -and $a3.Safety -lt 65) { [void]$rm.Add($a3) } } } }; if (-not (Confirm-RiskyRemovals $rm.ToArray())) { return } }
     $what = switch ($mode) { 'move' { "MOVE to: $($txtQ.Text)" } 'recycle' { 'send to the RECYCLE BIN' } default { 'PERMANENTLY DELETE (cannot be undone)' } }
     $noKeep = 0
     foreach ($s in $g) { $any = $false; foreach ($it in $s.Items) { if (-not $it.Remove) { $any = $true; break } }; if (-not $any) { $noKeep++ } }
@@ -2803,7 +3662,7 @@ Add-Type -TypeDefinition @"
 public static class ByteCmp { public static bool Eq(byte[] a, byte[] b, int n) { for (int i = 0; i < n; i++) { if (a[i] != b[i]) return false; } return true; } }
 "@
 }
-try { Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem } catch { }
+try { Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem } catch { Write-ErrLog $_ }
 
 $script:VerCancel = $false; $script:VerDone = 0L; $script:VerTotal = 1L; $script:VerText = ''; $script:VerLastUi = 0L
 $script:VerClock = [Diagnostics.Stopwatch]::StartNew()
@@ -3146,7 +4005,7 @@ function New-PvWindow {
     $pv.BPrev.Add_Click({ Step-PvPage -1 }); $pv.BNext.Add_Click({ Step-PvPage 1 })
     $pv.BMinus.Add_Click({ Set-PvZoom ($script:Pv.Zoom / 1.25) }); $pv.BPlus.Add_Click({ Set-PvZoom ($script:Pv.Zoom * 1.25) })
     $pv.BFit.Add_Click({ $script:Pv.Fit = $true; Set-PvZoom 0 }); $pv.B100.Add_Click({ Set-PvZoom 1.0 })
-    $pv.BOpen.Add_Click({ if ($script:Pv.Path) { try { [void][Diagnostics.Process]::Start($script:Pv.Path) } catch { } } })
+    $pv.BOpen.Add_Click({ if ($script:Pv.Path) { try { [void][Diagnostics.Process]::Start($script:Pv.Path) } catch { Write-ErrLog $_ } } })
     $pv.BPlay.Add_Click({
         $p = $script:Pv; if (-not $p.Media) { return }
         if ($p.Playing) { $p.Media.Pause(); $p.Playing = $false; $p.BPlay.Text = 'Play' } else { $p.Media.Play(); $p.Playing = $true; $p.BPlay.Text = 'Pause' }
@@ -3162,9 +4021,9 @@ function New-PvWindow {
                 if (-not $p.Seek.Capture) { $p.Seek.Value = [int][math]::Min(1000, 1000.0 * $cur / [math]::Max(0.1, $tot)) }
                 $p.LTime.Text = ('{0:mm\:ss} / {1:mm\:ss}' -f [TimeSpan]::FromSeconds($cur), [TimeSpan]::FromSeconds($tot))
             }
-        } catch { }
+        } catch { Write-ErrLog $_ }
     })
-    $wheel = { param($s, $e) if ([Windows.Forms.Control]::ModifierKeys -band [Windows.Forms.Keys]::Control) { try { ([Windows.Forms.HandledMouseEventArgs]$e).Handled = $true } catch { }; $p = $script:Pv; if ($e.Delta -gt 0) { Set-PvZoom ($p.Zoom * 1.15) } else { Set-PvZoom ($p.Zoom / 1.15) } } }
+    $wheel = { param($s, $e) if ([Windows.Forms.Control]::ModifierKeys -band [Windows.Forms.Keys]::Control) { try { ([Windows.Forms.HandledMouseEventArgs]$e).Handled = $true } catch { Write-ErrLog $_ }; $p = $script:Pv; if ($e.Delta -gt 0) { Set-PvZoom ($p.Zoom * 1.15) } else { Set-PvZoom ($p.Zoom / 1.15) } } }
     $pv.PnlImg.Add_MouseWheel($wheel); $pv.Pic.Add_MouseWheel($wheel); $pv.Txt.Add_MouseWheel($wheel)
     $pv.PnlImg.Add_Resize({ $p = $script:Pv; if ($p -and $p.Fit -and ($p.Mode -in 'image', 'pdf')) { Set-PvZoom 0 } })
     $pv.PnlImg.Add_MouseEnter({ $script:Pv.PnlImg.Focus() })
@@ -3179,7 +4038,7 @@ function New-PvWindow {
 
 function Clear-PvContent {
     $p = $script:Pv; if (-not $p) { return }
-    try { if ($p.Media) { $p.Media.Stop(); $p.Media.Source = $null; $p.Playing = $false } } catch { }
+    try { if ($p.Media) { $p.Media.Stop(); $p.Media.Source = $null; $p.Playing = $false } } catch { Write-ErrLog $_ }
     $p.Timer.Stop()
     $p.Pic.Image = $null
     if ($p.Bmp) { $p.Bmp.Dispose(); $p.Bmp = $null }
@@ -3270,14 +4129,14 @@ function Show-Preview([string]$path, [bool]$isDir, [string]$note = '') {
     try {
         if ($isDir) { $di = New-Object IO.DirectoryInfo($path); $meta = "folder, changed $($di.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))" }
         else { $fi = New-Object IO.FileInfo($path); $meta = "$(Format-Size $fi.Length), modified $($fi.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))" }
-    } catch { }
+    } catch { Write-ErrLog $_ }
     $p.Title.Text = "$note$path`r`n$meta"
     $p.Form.Text = "Preview - $([IO.Path]::GetFileName($path.TrimEnd('\')))"
     $p.Form.Cursor = [Windows.Forms.Cursors]::WaitCursor
     try {
         if (-not ([IO.File]::Exists($path) -or [IO.Directory]::Exists($path))) { Set-PvMode 'info' 'This file is not there any more.'; return }
         $kind = Get-PvKind $path $isDir
-        if ($kind -eq 'sniff') { $t = ''; $isT = $false; try { $t = Read-PvText $path ([ref]$isT) } catch { }; if ($isT) { $kind = 'text'; $p.SniffText = $t } else { $kind = 'binary' } } else { $p.SniffText = $null }
+        if ($kind -eq 'sniff') { $t = ''; $isT = $false; try { $t = Read-PvText $path ([ref]$isT) } catch { Write-ErrLog $_ }; if ($isT) { $kind = 'text'; $p.SniffText = $t } else { $kind = 'binary' } } else { $p.SniffText = $null }
         switch ($kind) {
             'folder' {
                 $lines = New-Object 'System.Collections.Generic.List[string]'; $n = 0
@@ -3349,7 +4208,7 @@ function Show-PreviewSelected {
     if (-not $lv.SelectedItems.Count) { return }
     $lvi = $lv.SelectedItems[0]; $it = $lvi.Tag
     $note = ''
-    try { if ($lvi.SubItems[4].Text) { $note = "[$($lvi.SubItems[4].Text)]  " } } catch { }
+    try { if ($lvi.SubItems[4].Text) { $note = "[$($lvi.SubItems[4].Text)]  " } } catch { Write-ErrLog $_ }
     Show-Preview $it.Path ($lv.Tag -eq 'Folder') $note
 }
 
@@ -3486,7 +4345,7 @@ $pgProc = New-MainPage '2   Processing'
 # the lists above, the buttons below, with a draggable bar between them (the bottom part keeps its height when the window is resized)
 $procS = New-Object Windows.Forms.SplitContainer; $procS.Dock = 'Fill'; $procS.Orientation = 'Horizontal'; $procS.FixedPanel = 'Panel2'
 Style-Split $procS
-try { $procS.Panel2MinSize = [int](70 * $msc) } catch { }
+try { $procS.Panel2MinSize = [int](70 * $msc) } catch { Write-ErrLog $_ }
 $procS.Tag = 'default'
 $script:ProcS = $procS; $script:Bottom = $bottom
 $tabs.Dock = 'Fill'; $procS.Panel1.Controls.Add($tabs)
@@ -3514,7 +4373,7 @@ function Set-ProcBottom($v) {   # height of the bottom section in 96-dpi pixels;
     if ($s.Height -lt 400) { $s.Tag = $(if ($null -eq $v) { 'default' } else { [double]$v }); return }
     $s.Tag = $null; $script:ProcSetting = $true
     $h = if ($null -eq $v) { $script:Bottom.GetPreferredSize((New-Object Drawing.Size([Math]::Max(300, $s.Width), 0))).Height + [int](8 * $k) } else { [int]($v * $k) }
-    try { $s.SplitterDistance = [Math]::Max(120, $s.Height - $h - $s.SplitterWidth) } catch { }
+    try { $s.SplitterDistance = [Math]::Max(120, $s.Height - $h - $s.SplitterWidth) } catch { Write-ErrLog $_ }
     $script:ProcSetting = $false
 }
 $script:ProcAuto = $true; $script:ProcSetting = $false
@@ -3548,9 +4407,25 @@ $f6 = New-Flow 'LeftToRight'
 $bReset = New-Btn 'Reset layout'; $bReset.MinimumSize = New-Object Drawing.Size(0, 0)
 $bReset.Add_Click({ Reset-Layout })
 $f6.Controls.Add($bReset); [void]$c6.Controls.Add($f6)
-$i = 0; foreach ($c in $c1, $c2, $c3, $c4, $c5, $c6) { [void]$setT.Controls.Add($c, 0, $i); $i++ }
-foreach ($k in 1..6) { [void]$setT.RowStyles.Add((New-Object Windows.Forms.RowStyle('AutoSize'))) }
-$setT.RowCount = 7; [void]$setT.RowStyles.Add((New-Object Windows.Forms.RowStyle('Percent', 100)))   # empty last row keeps the cards at their own height
+$c7 = New-Card 'Open files with' 'The program used by the Open button, double-click and right-click Open. Pick a type, then choose a program; types without their own program use "All files", then the Windows default.'
+$f7 = New-Flow 'LeftToRight'
+$cbOw = New-Object Windows.Forms.ComboBox; $cbOw.DropDownStyle = 'DropDownList'; $cbOw.Width = [int](220 * $msc); [void]$cbOw.Items.AddRange(@($script:OpenCats.Values)); $cbOw.SelectedIndex = 0
+$lblOw = New-Object Windows.Forms.Label; $lblOw.AutoSize = $true; $lblOw.Margin = New-Object Windows.Forms.Padding(8, 10, 8, 4); $lblOw.ForeColor = $script:UiMuted
+$bOwPick = New-Btn 'Choose program...'; $bOwReset = New-Btn 'Use Windows default'
+foreach ($b in $bOwPick, $bOwReset) { $b.MinimumSize = New-Object Drawing.Size(0, 0) }
+$script:OwCombo = $cbOw; $script:OwLabel = $lblOw
+function Update-OwLabel { $k = @($script:OpenCats.Keys)[$script:OwCombo.SelectedIndex]; $v = $script:OpenWith[$k]; $script:OwLabel.Text = $(if ($v) { $v } else { 'Windows default' }) }
+$cbOw.Add_SelectedIndexChanged({ Update-OwLabel })
+$bOwPick.Add_Click({
+    $dlg = New-Object Windows.Forms.OpenFileDialog; $dlg.Title = 'Choose the program that opens these files'; $dlg.Filter = 'Programs (*.exe)|*.exe'; $dlg.CheckFileExists = $true
+    if ($dlg.ShowDialog() -eq 'OK') { $k = @($script:OpenCats.Keys)[$script:OwCombo.SelectedIndex]; $script:OpenWith[$k] = $dlg.FileName; Update-OwLabel; Save-Settings }
+})
+$bOwReset.Add_Click({ $k = @($script:OpenCats.Keys)[$script:OwCombo.SelectedIndex]; [void]$script:OpenWith.Remove($k); Update-OwLabel; Save-Settings })
+Update-OwLabel
+$f7.Controls.AddRange(@($cbOw, $bOwPick, $bOwReset)); [void]$c7.Controls.Add($f7); [void]$c7.Controls.Add($lblOw)
+$i = 0; foreach ($c in $c1, $c2, $c3, $c4, $c5, $c6, $c7) { [void]$setT.Controls.Add($c, 0, $i); $i++ }
+foreach ($k in 1..7) { [void]$setT.RowStyles.Add((New-Object Windows.Forms.RowStyle('AutoSize'))) }
+$setT.RowCount = 8; [void]$setT.RowStyles.Add((New-Object Windows.Forms.RowStyle('Percent', 100)))   # empty last row keeps the cards at their own height
 $setS.Panel1.Controls.Add($setT); $pgSet.Controls.Add($setS)
 $hintS = New-Object Windows.Forms.Label; $hintS.Text = 'Drag the bar on the left to make the cards wider or narrower.'; $hintS.AutoSize = $true; $hintS.ForeColor = $script:UiMuted; $hintS.AutoSize = $false; $hintS.Dock = 'Top'; $hintS.Height = [int](60 * $msc); $hintS.Padding = New-Object Windows.Forms.Padding(12); $setS.Panel2.Controls.Add($hintS)
 
@@ -3636,7 +4511,7 @@ function Wrap-Field($x) {
     else {
         $h = New-Object Windows.Forms.Panel; $h.Name = 'rh'; $h.BackColor = $script:UiPanel; $h.Height = [int](36 * $sc); $h.Width = $(if ($x -is [Windows.Forms.NumericUpDown]) { [int](110 * $sc) } else { [int]($x.Width * $sc) })
         $h.Padding = New-Object Windows.Forms.Padding([int](10 * $sc), [int](7 * $sc), [int](8 * $sc), [int](4 * $sc))
-        try { $x.BorderStyle = 'None' } catch { }
+        try { $x.BorderStyle = 'None' } catch { Write-ErrLog $_ }
         $x.Dock = 'Fill'; $h.Controls.Add($x); Set-Round $h 9 $script:UiLine
     }
     $h.Margin = $margin; $h.Visible = $vis

@@ -4,3 +4,5 @@ folder-tab-options.html
 *.tmp
 Thumbs.db
 
+dist/
+do-not-upload-to-git/

@@ -1,4 +1,4 @@
-# DupCleaner
+# DupCleaner (version 2.0)
 
 A Windows desktop tool that finds **duplicate files and duplicate folders** by their real contents (SHA-256, never by name), shows them live while it scans, and lets you remove the extra copies safely.
 
@@ -19,6 +19,13 @@ Disks fill up with copies: photo backups, "Copy of" folders, old report versions
 - **Force delete** for stubborn folders: clears read-only/hidden/system flags, handles long paths, and tells you when a file is held by another program or blocked by permissions.
 - **Verify duplicates** re-checks the chosen copies byte by byte before you delete.
 - **Space saved** donut that tracks how much you have freed so far.
+- **Deletion safety review**: each copy of a folder gets a *Safety %*, a separate *confidence %*, a class (Very likely safe ... Unsafe) and a plain-language explanation built only from recorded evidence (running programs, owning application, install locations, registry and config references, hard links, cloud-sync, last remaining copy). Identical content does not mean a copy is safe to remove - for example two identical Chrome and Brave extension folders score 25%. Read-only; nothing is ever deleted or stopped automatically.
+- **Two scores per set (new in 2.0)**: **Safe to keep only one** (is it safe to delete the extra copies and live with one?) and **Risk if you delete all copies** (what you would lose if every copy went - always high for your own documents and photos). The list shows the first score, coloured green above 90%, orange 80-90%, red below 80%, and can be sorted "largest and safest".
+- **Automatic investigation (new in 2.0)**: after a scan every set is scored in the background, the one that frees the most space first (Esc stops it). A set that scores below 80% starts with every copy on KEEP, so you never delete it by accident.
+- **Space saved donut (new in 2.0)** also splits the space still to free by the three score colours.
+- **Error log (new in 2.0)**: errors the program handles quietly are recorded in `errors.log` so they can be found and fixed.
+- **Open files with**: choose the program used by Open / double-click (for all files or per type); default is Windows' own.
+- **Click outside to deselect**: clicking outside the files panel unselects the file and clears its preview.
 - **Fast re-scans**: a hash cache that only trusts entries while size and modified time still match; session and layout are restored on start.
 - **Arrangeable layout**: every inner panel can be resized or reordered by dragging, with a Reset layout button. Dark and light themes follow Windows.
 - Skips links/junctions and online-only (cloud placeholder) files so a scan never wanders outside what you picked.
@@ -31,7 +38,7 @@ Requirements: Windows 10/11 with Windows PowerShell 5.1 (built in).
 - **Script:** double-click `DupCleaner.cmd` (starts `DupCleaner.ps1` with no console window).
 - **Single exe (no .ps1 beside it):** run `Build-Exe.ps1` once. It uses the C# compiler that ships with Windows (nothing to download) and creates `DupCleaner.exe` with the script embedded. Re-run it after changing the script.
 
-Settings, session, hash cache and logs live in `%LOCALAPPDATA%\DupCleaner`.
+Settings, session, hash cache and logs (`crash.log`, `errors.log`) live in `%LOCALAPPDATA%\DupCleaner`. A ready-made `DupCleaner-v2.0.exe` is attached to the GitHub release.
 
 ## Tutorial (with fake files)
 
@@ -77,13 +84,19 @@ When the scan ends, **2 Processing** opens on the tab that has results. **Duplic
 ![Duplicate folders](docs/images/4-duplicate-folders.png)
 ![Folder preview](docs/images/5-folder-preview.png)
 
-### 4. Choose what happens to removed items
+### 4. Check deletion safety
 
-**3 Settings** decides what Apply and Delete now do: move to quarantine (default, undoable), send to the Recycle Bin, or delete permanently. It also holds the filters for what to look for/skip, speed options, text size, and **Reset layout**.
+Select a set and press **Safety review...**. It compares every copy side by side (score, confidence, class, recommendation), shows the score breakdown with any cap that applied, and a full evidence report you can save. The *Deletion safety* filter on the left narrows the list by class, and Apply / Delete now warn before removing a copy assessed below 65%. In 2.0 the set line shows both scores: *Safe to keep only one* and *Risk if you delete all copies*.
+
+![Safety review](docs/images/8-safety-review.png)
+
+### 5. Choose what happens to removed items
+
+**3 Settings** decides what Apply and Delete now do: move to quarantine (default, undoable), send to the Recycle Bin, or delete permanently. It also holds the filters for what to look for/skip, speed options, text size, the **Open files with** program, and **Reset layout**.
 
 ![Settings](docs/images/6-settings.png)
 
-### 5. Apply, then undo if you change your mind
+### 6. Apply, then undo if you change your mind
 
 Press **Apply...** (or **Delete now** on one card) and confirm. Space freed is added to the **Space saved** donut that appears whenever no file is selected. If it was a quarantine move, **Undo a move...** puts everything back.
 
@@ -98,7 +111,7 @@ DupCleaner tells you why: *in use by another program* (close that program and tr
 - Nothing is removed until you confirm; the default is the undoable quarantine.
 - Links/junctions are never followed, and an entry already gone from disk is dropped as stale instead of failing.
 - Review before using **Select EVERY copy (keep none)** or permanent delete: they cannot be undone.
-- No telemetry, no network access.
+- No telemetry, no network access. Nothing is written outside `%LOCALAPPDATA%\DupCleaner` and your quarantine folder.
 
 ## Project files
 
@@ -108,6 +121,7 @@ DupCleaner tells you why: *in use by another program* (close that program and tr
 | `DupCleaner.cmd` | Launcher without a console window |
 | `DupCleanerHost.cs`, `Build-Exe.ps1`, `DupCleaner.ico` | Build a single `DupCleaner.exe` |
 | `docs/images/` | Screenshots (made with fake demo files) |
+| `docs/PRD.md` / `docs/PRD.html` | Full product requirements (scanner, removal, UX, deletion-safety engine) with implementation status |
 
 ## License
 

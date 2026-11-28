@@ -1,0 +1,846 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DupCleaner - Product Requirements Document</title><style>:root{--bg:#fff;--fg:#1d2330;--mut:#5b6577;--card:#f5f7fa;--line:#dde2ea;--acc:#1f6feb;--code:#eef1f6}
+@media (prefers-color-scheme:dark){:root{--bg:#12151c;--fg:#e6e9ef;--mut:#9aa3b2;--card:#1a1f2a;--line:#2b3342;--acc:#6aa5ff;--code:#222a38}}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 "Segoe UI",system-ui,sans-serif}
+.wrap{display:flex;max-width:1280px;margin:0 auto}
+nav{position:sticky;top:0;align-self:flex-start;width:290px;max-height:100vh;overflow:auto;padding:24px 16px;border-right:1px solid var(--line);font-size:14px;flex-shrink:0}
+nav a{display:block;color:var(--mut);text-decoration:none;padding:3px 8px;border-radius:6px}
+nav a:hover{background:var(--card);color:var(--fg)}
+nav a.l1{font-weight:600;color:var(--fg);margin-top:12px}
+nav a.l2{padding-left:18px}
+main{flex:1;min-width:0;padding:32px 40px 80px}
+h1{font-size:2rem;margin:2.2rem 0 .6rem;line-height:1.25}
+main>h1:first-child{margin-top:0}
+h2{font-size:1.5rem;margin:2.2rem 0 .6rem;padding-top:.6rem;border-top:1px solid var(--line)}
+h3{font-size:1.15rem;margin:1.6rem 0 .4rem}h4{font-size:1rem;margin:1.2rem 0 .3rem;color:var(--mut)}
+a{color:var(--acc)}
+code{background:var(--code);padding:1px 6px;border-radius:5px;font:.9em Consolas,monospace}
+pre{background:var(--code);padding:14px;border-radius:8px;overflow:auto}pre code{padding:0;background:none}
+.tw{overflow-x:auto;margin:1rem 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:var(--card)}tr:nth-child(even) td{background:color-mix(in srgb,var(--card) 50%,transparent)}
+hr{border:0;border-top:2px solid var(--line);margin:2.5rem 0}
+blockquote{margin:1rem 0;padding:.5rem 1rem;border-left:4px solid var(--acc);background:var(--card)}
+ul.chk{list-style:none;padding-left:4px}
+li{margin:.2rem 0}
+@media (max-width:860px){nav{display:none}main{padding:20px 16px 60px}}
+@media print{nav{display:none}main{padding:0}}</style></head><body><div class="wrap"><nav><a class="l1" href="#dupcleaner-product-requirements-document-prd">DupCleaner - Product Requirements Document (PRD)</a>
+<a class="l1" href="#part-a-product">Part A - Product</a>
+<a class="l2" href="#a1-overview">A1. Overview</a>
+<a class="l2" href="#a2-module-map">A2. Module map</a>
+<a class="l2" href="#a3-module-1-scanner-requirements">A3. Module 1 - Scanner requirements</a>
+<a class="l2" href="#a4-module-4-processing-and-removal-requirements">A4. Module 4 - Processing and removal requirements</a>
+<a class="l2" href="#a5-module-5-user-experience-requirements">A5. Module 5 - User experience requirements</a>
+<a class="l1" href="#part-b-deletion-safety-intelligence">Part B - Deletion Safety Intelligence</a>
+<a class="l2" href="#b1-product-overview">B1. Product Overview</a>
+<a class="l2" href="#b2-goals-and-non-goals">B2. Goals and Non-Goals</a>
+<a class="l2" href="#b3-core-concepts">B3. Core Concepts</a>
+<a class="l2" href="#b4-safety-investigation-engine">B4. Safety Investigation Engine</a>
+<a class="l2" href="#b5-evidence-collection-and-storage">B5. Evidence Collection and Storage</a>
+<a class="l2" href="#b6-safety-assessment-percentage-engine">B6. Safety Assessment Percentage Engine</a>
+<a class="l2" href="#b7-safety-classification">B7. Safety Classification</a>
+<a class="l2" href="#b8-candidate-folder-evaluation">B8. Candidate Folder Evaluation</a>
+<a class="l2" href="#b9-user-facing-assessment-report">B9. User-Facing Assessment Report</a>
+<a class="l2" href="#b10-explanation-engine">B10. Explanation Engine</a>
+<a class="l2" href="#b11-user-interface-requirements">B11. User Interface Requirements</a>
+<a class="l2" href="#b12-investigation-workflow">B12. Investigation Workflow</a>
+<a class="l2" href="#b13-technical-requirements">B13. Technical Requirements</a>
+<a class="l2" href="#b14-safety-and-security-requirements">B14. Safety and Security Requirements</a>
+<a class="l2" href="#b15-acceptance-criteria">B15. Acceptance Criteria</a>
+<a class="l2" href="#b16-testing-scenarios">B16. Testing Scenarios</a>
+<a class="l2" href="#b17-final-product-success-metrics">B17. Final Product Success Metrics</a>
+<a class="l2" href="#b18-final-product-definition">B18. Final Product Definition</a>
+<a class="l1" href="#part-c-implementation-status-gaps-and-verification">Part C - Implementation status, gaps and verification</a>
+<a class="l2" href="#c1-status-of-the-safety-modules-version-2-0">C1. Status of the safety modules (version 2.0)</a>
+<a class="l2" href="#c1a-what-version-2-0-adds">C1a. What version 2.0 adds</a>
+<a class="l2" href="#c2-known-gaps-and-next-steps">C2. Known gaps and next steps</a>
+<a class="l2" href="#c3-verification-performed-versions-1-1-and-2-0">C3. Verification performed (versions 1.1 and 2.0)</a>
+</nav><main><h1 id="dupcleaner-product-requirements-document-prd">DupCleaner - Product Requirements Document (PRD)</h1>
+<p><strong>Product:</strong> DupCleaner - Windows duplicate file and folder finder with deletion-safety intelligence <strong>Version:</strong> 2.0 <strong>Platform:</strong> Windows 10 / Windows 11 (Windows PowerShell 5.1 + WinForms; optional single-file <code>DupCleaner.exe</code> host) <strong>Status:</strong> Version 2.0. Modules 1, 4 and 5 are built. Modules 2 and 3 have a first working version (see Part C for exactly what is and is not covered). <strong>Repository:</strong> <a href="https://github.com/Had-com/DupCleaner">https://github.com/Had-com/DupCleaner</a></p>
+<h2 id="contents">Contents</h2>
+<ul>
+<li>Part A - Product overview, principles, module map, and requirements for the scanner (Module 1), processing and removal (Module 4) and user experience (Module 5)</li>
+<li>Part B - Deletion Safety Intelligence: investigation (Module 2) and safety assessment (Module 3)</li>
+<li>Part C - Implementation status, known gaps, and verification</li>
+</ul>
+<hr>
+<h1 id="part-a-product">Part A - Product</h1>
+<h2 id="a1-overview">A1. Overview</h2>
+<h3 id="a1-1-purpose">A1.1 Purpose</h3>
+<p>Disks fill up with copies: photo backups, &quot;Copy of&quot; folders, old report versions, installers downloaded twice. DupCleaner finds duplicate <strong>files and folders by their real contents</strong> (SHA-256, never by name), shows them while the scan runs, and lets the user remove extra copies <strong>safely</strong> - with the evidence, an undo, and a warning when a folder looks like it might still be needed.</p>
+<h3 id="a1-2-target-users">A1.2 Target users</h3>
+<div class="tw"><table><thead><tr>
+<th>User</th>
+<th>Need</th>
+</tr></thead><tbody>
+<tr><td>Home user with a full disk</td><td>Free space quickly without breaking anything; plain-language explanations</td></tr>
+<tr><td>Photographer / power user with many backups</td><td>Find identical folders across drives, keep one, undo mistakes</td></tr>
+<tr><td>Technical user</td><td>See the evidence, control the removal method, repeat scans fast</td></tr>
+</tbody></table></div>
+<h3 id="a1-3-product-principles">A1.3 Product principles</h3>
+<ol>
+<li><strong>Safe by default.</strong> The default removal is a move to a quarantine folder that can be undone.</li>
+<li><strong>Nothing without a confirmation.</strong> No automatic deletion, renaming, or application/service termination.</li>
+<li><strong>Content, not names.</strong> Identity is decided by SHA-256 of contents.</li>
+<li><strong>Identical content does not mean interchangeable purpose.</strong> Each copy is judged on its own (Part B).</li>
+<li><strong>Show the evidence.</strong> Every score and recommendation can be traced to recorded findings.</li>
+<li><strong>Local and private.</strong> No network access, no telemetry.</li>
+<li><strong>Fast to come back to.</strong> Hash cache, saved session, and remembered layout.</li>
+</ol>
+<h3 id="a1-4-non-goals">A1.4 Non-goals</h3>
+<p>Uninstalling applications, editing application configuration, deleting Windows system files, replacing antivirus or Windows security, cloud services, and any guarantee that an application will never need a folder again.</p>
+<h2 id="a2-module-map">A2. Module map</h2>
+<div class="tw"><table><thead><tr>
+<th>#</th>
+<th>Module</th>
+<th>Purpose</th>
+<th>Status</th>
+</tr></thead><tbody>
+<tr><td>1</td><td>Scanner</td><td>Find duplicate files and folders by SHA-256, with live results</td><td>Built</td></tr>
+<tr><td>2</td><td>Safety investigation</td><td>Collect read-only evidence about each candidate folder</td><td>First version (Part C)</td></tr>
+<tr><td>3</td><td>Safety assessment</td><td>Per-folder deletion-safety %, assessment confidence, classification, explanation</td><td>First version (Part C)</td></tr>
+<tr><td>4</td><td>Processing and removal</td><td>Review, mark, apply (quarantine / Recycle Bin / permanent), undo, force delete</td><td>Built</td></tr>
+<tr><td>5</td><td>User experience</td><td>Tabs, layout, preview, settings, themes</td><td>Built</td></tr>
+</tbody></table></div>
+<h2 id="a3-module-1-scanner-requirements">A3. Module 1 - Scanner requirements</h2>
+<div class="tw"><table><thead><tr>
+<th>ID</th>
+<th>Requirement</th>
+</tr></thead><tbody>
+<tr><td>S-1</td><td>The user can add folders to scan by the Add folder button or by dragging folders onto the list, and can remove them.</td></tr>
+<tr><td>S-2</td><td>Duplicate files and duplicate folders are searched in one scan; each can be turned off.</td></tr>
+<tr><td>S-3</td><td>Files are grouped by size and then compared by SHA-256 of their contents; folders are compared by the hashes of everything inside them.</td></tr>
+<tr><td>S-4</td><td>Results appear live while the scan runs, with progress, an ETA, elapsed time, and Pause / Cancel.</td></tr>
+<tr><td>S-5</td><td>A persistent fingerprint cache keeps a hash only while the file&#39;s size and modified time still match; it can be turned off.</td></tr>
+<tr><td>S-6</td><td>Hard-linked copies of the same data are collapsed instead of being reported as duplicates.</td></tr>
+<tr><td>S-7</td><td>Links, junctions and reparse points are never followed. OneDrive online-only files and system / package locations can be skipped (on by default).</td></tr>
+<tr><td>S-8</td><td>Files below a configurable minimum size are ignored.</td></tr>
+<tr><td>S-9</td><td>Sub-folder sets that exist inside duplicate folders are recognised.</td></tr>
+<tr><td>S-10</td><td>The last results and the scan roots are saved and restored on the next start; result lists can be saved and restored.</td></tr>
+<tr><td>S-11</td><td>A finished scan opens the results tab that has duplicates (folders first when both exist).</td></tr>
+</tbody></table></div>
+<h2 id="a4-module-4-processing-and-removal-requirements">A4. Module 4 - Processing and removal requirements</h2>
+<div class="tw"><table><thead><tr>
+<th>ID</th>
+<th>Requirement</th>
+</tr></thead><tbody>
+<tr><td>P-1</td><td>Duplicate files and duplicate folders have separate tabs. The Duplicate folders view lists sets on the left, the copies of the chosen set in the middle, and an INSIDE panel with a preview on the right.</td></tr>
+<tr><td>P-2</td><td>Files can be filtered by name or path, type and modified date (including a custom range); sets can be searched by path and sorted (space freed, name, number of copies, date).</td></tr>
+<tr><td>P-3</td><td>One copy per set is kept automatically (the oldest); the user can tick <strong>Delete this copy</strong>, press <strong>Keep only this one</strong>, <strong>Reset to auto rule</strong>, <strong>Keep selected</strong>, or <strong>Select EVERY copy (keep none)</strong>, which shows an explicit warning.</td></tr>
+<tr><td>P-4</td><td><strong>Apply</strong> and <strong>Delete now</strong> use the action chosen in Settings: move to the quarantine folder (undoable), send to the Recycle Bin, or delete permanently. Each asks for confirmation; permanent delete asks twice.</td></tr>
+<tr><td>P-5</td><td><strong>Undo a move</strong> restores quarantined items from their manifest; <strong>Restore list</strong> reloads a saved list.</td></tr>
+<tr><td>P-6</td><td><strong>Verify duplicates</strong> re-checks the chosen copies before deleting.</td></tr>
+<tr><td>P-7</td><td><strong>Force delete</strong> (Settings) clears read-only/hidden/system flags and uses long-path deletion; the result says whether a folder is held by another program or blocked by permissions, and a partially copied quarantine item is never touched.</td></tr>
+<tr><td>P-8</td><td>A copy that is already gone from disk is dropped as stale instead of failing; copies on a disk that is not connected are never dropped.</td></tr>
+<tr><td>P-9</td><td>A <strong>Space saved</strong> donut (saved so far vs. still can be freed) is shown whenever no file is selected; the total is kept between runs and reduced when a move is undone.</td></tr>
+<tr><td>P-10</td><td>Removal logs are written (last run, last undo) and shown when something fails.</td></tr>
+</tbody></table></div>
+<h2 id="a5-module-5-user-experience-requirements">A5. Module 5 - User experience requirements</h2>
+<div class="tw"><table><thead><tr>
+<th>ID</th>
+<th>Requirement</th>
+</tr></thead><tbody>
+<tr><td>U-1</td><td>Three main tabs: <strong>1 Scanning</strong>, <strong>2 Processing</strong>, <strong>3 Settings</strong>. A finished scan opens Processing, and Processing opens on the sub-tab with results.</td></tr>
+<tr><td>U-2</td><td>A dark, rounded interface that follows the Windows light/dark setting; list text size A- / A+ and Ctrl + mouse wheel.</td></tr>
+<tr><td>U-3</td><td>Every inner pane can be resized with a dividing bar, and the Settings cards can be reordered by dragging their title; the layout is remembered and <strong>Reset layout</strong> restores the default. The bottom action section is shorter, with Apply / Undo / Restore on the same row as the left buttons and a draggable divider.</td></tr>
+<tr><td>U-4</td><td>The INSIDE panel shows Name / Size / Modified columns like Explorer, with user-resizable columns, and previews pictures, text, PDF, audio/video and folders.</td></tr>
+<tr><td>U-5</td><td><strong>Deselect on outside click:</strong> when a file is selected in the INSIDE panel, a click anywhere outside that panel unselects it and clears its preview (the preview pane returns to the Space saved donut). Clicks inside the panel, on the preview buttons (Open, Show in Explorer, Bigger preview) and in menus or other windows do not count as outside. Deselecting never changes what is marked for removal.</td></tr>
+<tr><td>U-6</td><td><strong>Open files with:</strong> a Settings card chooses the program used by Open, double-click and right-click Open - for all files and optionally per type (pictures, videos, music, documents, text and data). The default is the Windows default. A missing or failing program shows a message and falls back to the Windows default for that open. The path is passed as one quoted argument. The choice is saved.</td></tr>
+<tr><td>U-7</td><td>Keyboard: F2 / F3 preview, Delete and Enter behave as in the lists; right-click menus offer Open, Open with..., Preview and Show in Explorer.</td></tr>
+<tr><td>U-8</td><td>The window and taskbar icon (overlapping green-tick and red-cross folders) is built into the exe.</td></tr>
+<tr><td>U-9</td><td>The app can be run as <code>DupCleaner.cmd</code> (script) or as a single <code>DupCleaner.exe</code> built by <code>Build-Exe.ps1</code> with the C# compiler that ships with Windows.</td></tr>
+</tbody></table></div>
+<hr>
+<h1 id="part-b-deletion-safety-intelligence">Part B - Deletion Safety Intelligence</h1>
+<p>The specification below is the full target. Part C records what the first version does.</p>
+<h2 id="b1-product-overview">B1. Product Overview</h2>
+<h3 id="b1-1-purpose">B1.1 Purpose</h3>
+<p>Build an intelligent safety investigation engine that analyzes duplicate folders discovered by the existing scanner and determines whether each individual folder can be safely deleted.</p>
+<p>The engine must investigate the relationship between duplicate folders, their associated applications, Windows dependencies, runtime usage, configuration references, and data ownership.</p>
+<p>It must produce an understandable safety assessment percentage for every candidate folder, accompanied by:</p>
+<ul>
+<li>A safety classification.</li>
+<li>Evidence supporting the assessment.</li>
+<li>Identified risks.</li>
+<li>Missing information.</li>
+<li>Recommended action.</li>
+<li>Potential disk space recovery.</li>
+<li>A confidence level in the assessment itself.</li>
+</ul>
+<p>The system must prioritize data integrity and application stability over disk space recovery.</p>
+<h3 id="b1-2-core-principle">B1.2 Core principle</h3>
+<p><strong>Identical content does not mean interchangeable purpose.</strong></p>
+<p>Two folders may contain precisely the same files while serving completely different applications, profiles, environments, or runtime contexts.</p>
+<p>The system must evaluate each folder independently rather than assuming that one copy is unnecessary.</p>
+<p>Example: a Chromium extension exists in Google Chrome&#39;s extension directory, in Brave&#39;s extension directory, and in an application&#39;s embedded Chromium profile. Even if all three copies have identical SHA-256 hashes, all three may be necessary.</p>
+<hr>
+<h2 id="b2-goals-and-non-goals">B2. Goals and Non-Goals</h2>
+<h3 id="b2-1-goals">B2.1 Goals</h3>
+<ol>
+<li>Determine whether a folder is actively used.</li>
+<li>Identify applications associated with each folder.</li>
+<li>Discover references to folders from applications, services, configurations, shortcuts, tasks, and registry entries.</li>
+<li>Identify application-specific storage and cache conventions.</li>
+<li>Detect shared dependencies and independently maintained copies.</li>
+<li>Identify folders that are safe to remove, potentially removable, or must be retained.</li>
+<li>Calculate a transparent safety assessment percentage.</li>
+<li>Explain every assessment in human-readable language.</li>
+<li>Prevent deletion when critical dependencies or uncertainties exist.</li>
+<li>Provide evidence that can be reviewed before any cleanup operation.</li>
+</ol>
+<h3 id="b2-2-non-goals">B2.2 Non-Goals</h3>
+<p>This module is not responsible for:</p>
+<ul>
+<li>Finding duplicate folders (handled by Module 1).</li>
+<li>Automatically deciding that identical files are redundant.</li>
+<li>Removing application dependencies.</li>
+<li>Uninstalling applications.</li>
+<li>Modifying application configurations to redirect paths.</li>
+<li>Deleting Windows system files.</li>
+<li>Guaranteeing that an application will never need a folder again.</li>
+<li>Replacing Windows security or antivirus functionality.</li>
+</ul>
+<hr>
+<h2 id="b3-core-concepts">B3. Core Concepts</h2>
+<p>The system must distinguish three different concepts.</p>
+<h3 id="b3-1-content-similarity">B3.1 Content similarity</h3>
+<p>How similar are two folders? Example: 100% identical file contents.</p>
+<h3 id="b3-2-deletion-safety">B3.2 Deletion safety</h3>
+<p>How safe is deleting one specific folder while retaining the others? Example: Folder A: 98% estimated deletion safety. Folder B: 15% estimated deletion safety.</p>
+<h3 id="b3-3-assessment-confidence">B3.3 Assessment confidence</h3>
+<p>How reliable is the evidence used to calculate the safety assessment? Example: Safety assessment 98%, assessment confidence 94%.</p>
+<p>These metrics must never be combined or presented as interchangeable.</p>
+<p>A high similarity score must never automatically increase the deletion safety score.</p>
+<hr>
+<h2 id="b4-safety-investigation-engine">B4. Safety Investigation Engine</h2>
+<p>The engine must collect evidence from multiple independent sources.</p>
+<h3 id="b4-1-process-and-runtime-investigation">B4.1 Process and runtime investigation</h3>
+<p>Determine whether running processes use, reference, or access the candidate directory.</p>
+<p>Investigations:</p>
+<ul>
+<li>Process executable paths.</li>
+<li>Process command-line arguments.</li>
+<li>Parent and child process relationships.</li>
+<li>Open file handles, where accessible.</li>
+<li>Loaded modules and application processes.</li>
+<li>Background services.</li>
+<li>Windows scheduled tasks.</li>
+<li>Application processes with access to the relevant directory.</li>
+<li>Recent file access evidence, when available.</li>
+</ul>
+<p>Requirements:</p>
+<ul>
+<li>Identify processes associated with the folder.</li>
+<li>Identify the executable and application owner.</li>
+<li>Distinguish direct references from indirect associations.</li>
+<li>Record inaccessible process information.</li>
+<li>Never interpret missing command-line references as proof that a folder is unused.</li>
+</ul>
+<p>Important: a process may access a folder without including its path in its command line. A folder may also be needed only when an application starts again.</p>
+<h3 id="b4-2-application-ownership-investigation">B4.2 Application ownership investigation</h3>
+<p>Identify which applications own, maintain, or depend on the folder.</p>
+<p>Investigate:</p>
+<ul>
+<li>Windows installed applications.</li>
+<li>Microsoft Store applications.</li>
+<li>WindowsApps package directories.</li>
+<li>Application installation directories.</li>
+<li>Application data directories.</li>
+<li>LocalAppData.</li>
+<li>Roaming AppData.</li>
+<li>ProgramData.</li>
+<li>Browser profiles.</li>
+<li>Application caches.</li>
+<li>Extension directories.</li>
+<li>User profiles.</li>
+<li>Portable applications.</li>
+</ul>
+<p>Identify the application using:</p>
+<ul>
+<li>Package identity.</li>
+<li>Application manifests.</li>
+<li>Executable metadata.</li>
+<li>File signatures.</li>
+<li>Installation records.</li>
+<li>Configuration references.</li>
+<li>Directory naming conventions.</li>
+<li>Known application-specific folder structures.</li>
+</ul>
+<p>Output application ownership as one of: Confirmed, Probable, Unknown, Shared ownership.</p>
+<p>Multiple applications may own separate copies of identical data.</p>
+<h3 id="b4-3-static-dependency-investigation">B4.3 Static dependency investigation</h3>
+<p>Search for references to the candidate folder in relevant files.</p>
+<p>Potential sources:</p>
+<ul>
+<li>JSON, XML, INI and YAML configuration files.</li>
+<li>Application manifests.</li>
+<li>Shortcut targets.</li>
+<li>PowerShell scripts and batch files.</li>
+<li>Application launch configurations.</li>
+<li>Registry entries.</li>
+<li>Service configurations.</li>
+<li>Scheduled task definitions.</li>
+<li>Browser extension manifests.</li>
+<li>Application-specific databases.</li>
+</ul>
+<p>Requirements:</p>
+<ul>
+<li>Identify references to the full directory path.</li>
+<li>Identify references to parent directories.</li>
+<li>Identify references to application-specific identifiers.</li>
+<li>Distinguish active references from historical references.</li>
+<li>Record the source file and exact location of every discovered reference.</li>
+</ul>
+<p>Do not modify configuration files during investigation. Do not execute discovered scripts or configuration contents.</p>
+<h3 id="b4-4-windows-registry-investigation">B4.4 Windows registry investigation</h3>
+<p>Investigate relevant registry locations for folder references.</p>
+<p>Potential sources:</p>
+<ul>
+<li>Installed application records.</li>
+<li>Application-specific configuration keys.</li>
+<li>Uninstall information.</li>
+<li>User-specific application settings.</li>
+<li>Shell folder references.</li>
+<li>Application startup registrations.</li>
+<li>File associations.</li>
+<li>App package registrations.</li>
+</ul>
+<p>Requirements:</p>
+<ul>
+<li>Use read-only registry access.</li>
+<li>Record registry key and value names.</li>
+<li>Record matching paths.</li>
+<li>Identify whether the reference appears active, historical, or uncertain.</li>
+<li>Do not interpret every registry reference as an active dependency.</li>
+</ul>
+<h3 id="b4-5-file-and-directory-relationship-investigation">B4.5 File and directory relationship investigation</h3>
+<p>Analyze the relationship between candidate folders.</p>
+<p>Investigations:</p>
+<ul>
+<li>SHA-256 file hashes.</li>
+<li>Relative file paths.</li>
+<li>File sizes.</li>
+<li>File timestamps.</li>
+<li>Directory structure.</li>
+<li>Version numbers.</li>
+<li>File metadata.</li>
+<li>Manifest identifiers.</li>
+<li>Configuration differences.</li>
+<li>Hidden files.</li>
+<li>Junctions, symbolic links, hard links and reparse points.</li>
+</ul>
+<p>Classify relationships:</p>
+<ol>
+<li>Exact duplicate.</li>
+<li>Same files, different directory structure.</li>
+<li>Same application, different versions.</li>
+<li>Partial duplicate.</li>
+<li>Shared files, different application purposes.</li>
+<li>Independent copies.</li>
+<li>Unknown relationship.</li>
+</ol>
+<p>Important: a hard link or symbolic link must not be treated as an ordinary independent copy. The system must inspect the underlying filesystem relationship before calculating recoverable space.</p>
+<h3 id="b4-6-cache-and-temporary-data-investigation">B4.6 Cache and temporary-data investigation</h3>
+<p>Identify whether a candidate folder appears to be:</p>
+<ul>
+<li>Temporary application data.</li>
+<li>Rebuildable cache.</li>
+<li>Browser cache.</li>
+<li>Application download cache.</li>
+<li>Extension installation cache.</li>
+<li>Persistent application storage.</li>
+<li>User-generated data.</li>
+<li>Application state.</li>
+<li>Database storage.</li>
+<li>Update package.</li>
+<li>Installer data.</li>
+<li>Backup data.</li>
+</ul>
+<p>A folder name containing &quot;cache&quot;, &quot;temp&quot;, or &quot;backup&quot; is not sufficient evidence that deletion is safe.</p>
+<p>The engine must identify the owning application and determine whether the data is reconstructible.</p>
+<h3 id="b4-7-version-and-lifecycle-investigation">B4.7 Version and lifecycle investigation</h3>
+<p>Identify:</p>
+<ul>
+<li>Application version.</li>
+<li>Folder version.</li>
+<li>Extension version.</li>
+<li>Installed version.</li>
+<li>Potentially obsolete versions.</li>
+<li>Update-related directories.</li>
+<li>Currently registered versions.</li>
+<li>Previous versions retained for rollback.</li>
+</ul>
+<p>The engine must not assume that older versions are unnecessary. An older version may be required for recovery, rollback, or application compatibility.</p>
+<hr>
+<h2 id="b5-evidence-collection-and-storage">B5. Evidence Collection and Storage</h2>
+<p>Every investigation must produce a structured evidence record.</p>
+<div class="tw"><table><thead><tr>
+<th>Field</th>
+<th>Description</th>
+</tr></thead><tbody>
+<tr><td>Evidence ID</td><td>Unique identifier</td></tr>
+<tr><td>Candidate folder</td><td>Folder being assessed</td></tr>
+<tr><td>Evidence category</td><td>Runtime, ownership, registry, etc.</td></tr>
+<tr><td>Evidence source</td><td>Exact source of observation</td></tr>
+<tr><td>Finding</td><td>What was discovered</td></tr>
+<tr><td>Result</td><td>Positive, negative, or unknown</td></tr>
+<tr><td>Timestamp</td><td>When it was collected</td></tr>
+<tr><td>Reliability</td><td>Evidence reliability</td></tr>
+<tr><td>Impact</td><td>Effect on deletion safety</td></tr>
+<tr><td>Explanation</td><td>Human-readable interpretation</td></tr>
+</tbody></table></div>
+<p>Evidence must be timestamped and associated with the relevant scan session.</p>
+<p>The engine must distinguish:</p>
+<ul>
+<li><strong>Positive evidence:</strong> a dependency was discovered.</li>
+<li><strong>Negative evidence:</strong> a specific investigation found no dependency.</li>
+<li><strong>Unknown evidence:</strong> the investigation could not establish the answer.</li>
+</ul>
+<p>An inaccessible source must never be silently interpreted as a negative result.</p>
+<hr>
+<h2 id="b6-safety-assessment-percentage-engine">B6. Safety Assessment Percentage Engine</h2>
+<h3 id="b6-1-main-requirement">B6.1 Main requirement</h3>
+<p>Every candidate folder must receive a deletion safety percentage between 0% and 100%.</p>
+<p>The percentage represents the engine&#39;s estimated confidence that deleting this particular folder will not cause data loss, application malfunction, or disruption to dependent software.</p>
+<p>It is not a statistical guarantee. It must be evidence-based, explainable, and conservative.</p>
+<h3 id="b6-2-assessment-dimensions">B6.2 Assessment dimensions</h3>
+<p>Use a weighted scoring model.</p>
+<div class="tw"><table><thead><tr>
+<th>Assessment dimension</th>
+<th>Weight</th>
+</tr></thead><tbody>
+<tr><td>Runtime dependency investigation</td><td>20%</td></tr>
+<tr><td>Application ownership and dependency investigation</td><td>20%</td></tr>
+<tr><td>Configuration and registry references</td><td>15%</td></tr>
+<tr><td>Data classification and reconstructibility</td><td>15%</td></tr>
+<tr><td>Duplicate equivalence and replacement verification</td><td>15%</td></tr>
+<tr><td>Version and lifecycle analysis</td><td>10%</td></tr>
+<tr><td>Filesystem relationship and deletion integrity</td><td>5%</td></tr>
+<tr><td><strong>Total</strong></td><td><strong>100%</strong></td></tr>
+</tbody></table></div>
+<p>Each dimension receives an evidence-based score from 0 to 100. A score of 100 means the available evidence strongly supports safe removal in that dimension. A score of 0 means the evidence strongly indicates that deletion is unsafe.</p>
+<p>An unknown dimension must not receive 100 simply because no problem was discovered.</p>
+<h3 id="b6-3-calculation">B6.3 Calculation</h3>
+<p>Safety Score = Sum of (Dimension Score x Dimension Weight).</p>
+<p>Example:</p>
+<div class="tw"><table><thead><tr>
+<th>Dimension</th>
+<th>Score</th>
+<th>Weight</th>
+</tr></thead><tbody>
+<tr><td>Runtime</td><td>100</td><td>20%</td></tr>
+<tr><td>Ownership</td><td>90</td><td>20%</td></tr>
+<tr><td>Configuration</td><td>100</td><td>15%</td></tr>
+<tr><td>Data classification</td><td>95</td><td>15%</td></tr>
+<tr><td>Duplicate verification</td><td>100</td><td>15%</td></tr>
+<tr><td>Lifecycle</td><td>80</td><td>10%</td></tr>
+<tr><td>Filesystem</td><td>100</td><td>5%</td></tr>
+</tbody></table></div>
+<p>Calculated score: 93.25%.</p>
+<p>The final score must also apply safety overrides and uncertainty penalties.</p>
+<h3 id="b6-4-mandatory-safety-overrides">B6.4 Mandatory safety overrides</h3>
+<p>Certain findings must override the weighted score.</p>
+<div class="tw"><table><thead><tr>
+<th>Finding</th>
+<th>Maximum safety score</th>
+</tr></thead><tbody>
+<tr><td>Confirmed active application dependency</td><td>10%</td></tr>
+<tr><td>Confirmed active service dependency</td><td>10%</td></tr>
+<tr><td>Confirmed required application data</td><td>5%</td></tr>
+<tr><td>Candidate contains unique user data without a verified backup</td><td>20%</td></tr>
+<tr><td>Required database or application state</td><td>10%</td></tr>
+<tr><td>Filesystem relationship cannot be safely resolved</td><td>30%</td></tr>
+<tr><td>Critical investigation sources inaccessible</td><td>60%</td></tr>
+</tbody></table></div>
+<p>The most restrictive applicable override wins. These are conservative policy caps, not measured probabilities. The system must support additional override rules.</p>
+<h3 id="b6-5-missing-evidence-penalties">B6.5 Missing evidence penalties</h3>
+<p>Missing information must lower assessment confidence and may lower the safety score.</p>
+<p>Examples:</p>
+<ul>
+<li>Unable to inspect running file handles.</li>
+<li>Unable to identify folder ownership.</li>
+<li>Access denied to relevant registry locations.</li>
+<li>Unknown application-specific directory.</li>
+<li>Incomplete filesystem analysis.</li>
+<li>Unknown backup status.</li>
+<li>Inability to establish whether another copy is independently maintained.</li>
+</ul>
+<p>The system must distinguish between evidence of danger, absence of evidence, and missing evidence. These are three different conditions.</p>
+<hr>
+<h2 id="b7-safety-classification">B7. Safety Classification</h2>
+<div class="tw"><table><thead><tr>
+<th>Percentage</th>
+<th>Classification</th>
+<th>Recommended action</th>
+</tr></thead><tbody>
+<tr><td>95-100%</td><td>Very likely safe</td><td>Eligible for controlled cleanup after confirmation</td></tr>
+<tr><td>85-94%</td><td>Likely safe</td><td>Review evidence before cleanup</td></tr>
+<tr><td>65-84%</td><td>Uncertain</td><td>Investigate further</td></tr>
+<tr><td>35-64%</td><td>High risk</td><td>Keep unless additional evidence resolves concerns</td></tr>
+<tr><td>0-34%</td><td>Unsafe</td><td>Do not delete</td></tr>
+</tbody></table></div>
+<p>Mandatory overrides always take precedence over percentage classifications. A folder with a raw calculated score of 98% but a confirmed active dependency must not be classified as safe; it must receive the relevant override and an explicit explanation.</p>
+<h3 id="b7-1-separate-assessment-confidence">B7.1 Separate assessment confidence</h3>
+<p>Each result must also display an assessment confidence percentage, measuring how complete and reliable the investigation was.</p>
+<ul>
+<li>90-100%: Strong evidence coverage.</li>
+<li>75-89%: Good evidence coverage.</li>
+<li>50-74%: Limited evidence coverage.</li>
+<li>0-49%: Insufficient evidence.</li>
+</ul>
+<p>The confidence calculation must reflect source coverage, reliability, freshness, and consistency. It must not simply repeat the safety score.</p>
+<hr>
+<h2 id="b8-candidate-folder-evaluation">B8. Candidate Folder Evaluation</h2>
+<p>Every folder must be assessed individually. A duplicate group must not receive a single shared safety score.</p>
+<p>Example: three folders contain identical files.</p>
+<div class="tw"><table><thead><tr>
+<th>Candidate</th>
+<th>Safety score</th>
+<th>Assessment</th>
+</tr></thead><tbody>
+<tr><td>Chrome extension</td><td>12%</td><td>Unsafe</td></tr>
+<tr><td>Brave extension</td><td>12%</td><td>Unsafe</td></tr>
+<tr><td>Application extension copy</td><td>18%</td><td>Unsafe</td></tr>
+</tbody></table></div>
+<p>Even though all three copies are identical, all may be required.</p>
+<p>Another example: two copies of an application-generated temporary export exist.</p>
+<div class="tw"><table><thead><tr>
+<th>Candidate</th>
+<th>Safety score</th>
+<th>Assessment</th>
+</tr></thead><tbody>
+<tr><td>Temporary export A</td><td>97%</td><td>Very likely safe</td></tr>
+<tr><td>Temporary export B</td><td>18%</td><td>Unsafe</td></tr>
+</tbody></table></div>
+<p>The difference must be supported by evidence, not arbitrary selection.</p>
+<hr>
+<h2 id="b9-user-facing-assessment-report">B9. User-Facing Assessment Report</h2>
+<p>Each candidate folder must have a detailed report.</p>
+<p><strong>Folder identification:</strong> full path, folder size, number of files, number of subdirectories, last modified date, application association, duplicate group ID.</p>
+<p><strong>Safety assessment:</strong> deletion safety percentage, classification, assessment confidence, investigation completion status.</p>
+<p><strong>Evidence:</strong> confirmed dependencies, potential dependencies, negative findings, unknown findings, related applications, relevant processes, configuration references, registry references.</p>
+<p><strong>Risks:</strong> potential application failure, user-data loss, profile corruption, update or rollback failure, shared-data disruption.</p>
+<p><strong>Recommendation</strong>, one of: Keep; Keep and investigate; Eligible for controlled cleanup; Eligible for backup and cleanup testing; Not enough information to decide.</p>
+<p><strong>Potential disk recovery:</strong> apparent folder size, estimated unique physical storage, estimated recoverable storage, space shared through hard links or other filesystem mechanisms.</p>
+<hr>
+<h2 id="b10-explanation-engine">B10. Explanation Engine</h2>
+<p>Every score must have a human-readable explanation, for low scores and for high scores.</p>
+<p>Example (low):</p>
+<p><strong>Safety assessment: 18% - Unsafe</strong></p>
+<p>Why:</p>
+<ul>
+<li>This folder belongs to a registered browser profile.</li>
+<li>Its application-specific extension directory is present.</li>
+<li>The same extension exists in other browser environments.</li>
+<li>Identical contents do not establish interchangeable ownership.</li>
+<li>The application may require this copy during startup.</li>
+</ul>
+<p>Recommendation: Keep this folder.</p>
+<p>Example (high):</p>
+<p><strong>Safety assessment: 97% - Very likely safe</strong></p>
+<p>Why:</p>
+<ul>
+<li>The candidate is a verified temporary export.</li>
+<li>An identical verified copy exists at another location.</li>
+<li>No unique files were discovered.</li>
+<li>No relevant application dependencies were found in the investigated sources.</li>
+<li>No filesystem links were detected.</li>
+<li>No critical investigation failures were reported.</li>
+</ul>
+<p>Recommendation: Eligible for controlled cleanup after user confirmation.</p>
+<p>The explanation engine must not invent evidence or make unsupported claims.</p>
+<hr>
+<h2 id="b11-user-interface-requirements">B11. User Interface Requirements</h2>
+<h3 id="b11-1-duplicate-group-overview">B11.1 Duplicate group overview</h3>
+<p>Display: duplicate group name, number of copies, total apparent storage, estimated recoverable storage, number of safe, uncertain and unsafe candidates.</p>
+<h3 id="b11-2-candidate-comparison">B11.2 Candidate comparison</h3>
+<p>Display every folder in the group separately.</p>
+<div class="tw"><table><thead><tr>
+<th>Column</th>
+<th>Purpose</th>
+</tr></thead><tbody>
+<tr><td>Folder path</td><td>Full location</td></tr>
+<tr><td>Application</td><td>Associated application</td></tr>
+<tr><td>Size</td><td>Folder size</td></tr>
+<tr><td>Similarity</td><td>Content comparison</td></tr>
+<tr><td>Safety</td><td>Deletion safety percentage</td></tr>
+<tr><td>Confidence</td><td>Evidence confidence</td></tr>
+<tr><td>Status</td><td>Safety classification</td></tr>
+<tr><td>Recommendation</td><td>Suggested action</td></tr>
+</tbody></table></div>
+<h3 id="b11-3-detailed-investigation-view">B11.3 Detailed investigation view</h3>
+<p>Selecting a candidate opens: safety score breakdown, evidence collected, application relationships, dependency findings, risk explanations, missing information, investigation timestamps.</p>
+<h3 id="b11-4-filtering">B11.4 Filtering</h3>
+<p>Users must be able to filter by: very likely safe, likely safe, uncertain, high risk, unsafe, application-associated folders, non-application folders, unknown ownership, high storage recovery, low assessment confidence.</p>
+<h4 id="two-percentages-shown-side-by-side">Two percentages, shown side by side</h4>
+<p>Deletion safety and assessment confidence must be visible next to each other, for example:</p>
+<ul>
+<li><strong>Deletion safety: 97%</strong> - Very likely safe - estimated safety of deleting this particular folder.</li>
+<li><strong>Assessment confidence: 68%</strong> - Limited evidence - how complete and reliable the investigation is.</li>
+</ul>
+<p>(Illustrative values only.) A folder with 97% safety but only 68% assessment confidence must not be presented as a straightforward deletion recommendation; it should require further investigation.</p>
+<hr>
+<h3 id="b11-5-file-selection-and-preview-behavior">B11.5 File selection and preview behavior</h3>
+<ul>
+<li><strong>Deselect on outside click:</strong> if a file is selected in the files panel (the INSIDE list), clicking anywhere outside that panel unselects it, and the preview pane no longer shows that file. The preview area returns to its empty state (the Space saved donut).</li>
+<li>Clicking another file inside the panel selects that file and shows its preview as before.</li>
+<li>Clicking a control that acts on the selected file (Open, Show in Explorer, Bigger preview, Preview F3) must not count as an &quot;outside&quot; click, so those actions keep working on the current selection.</li>
+<li>Deselecting must never change what is checked for removal; selection is for viewing only.</li>
+</ul>
+<h3 id="b11-6-preview-opening-software">B11.6 Preview opening software</h3>
+<ul>
+<li>Add a setting (in Settings) to choose which program opens a file when the user presses <strong>Open</strong> or double-clicks it, instead of always using the Windows default.</li>
+<li>Options: <strong>Windows default</strong> (initial value), or <strong>Choose program...</strong> with a file picker for an .exe; the chosen program and its path are shown and can be reset to default.</li>
+<li>Optionally allow a different program per file type (for example images, documents, video); a type with no override uses the global choice, then the Windows default.</li>
+<li>If the chosen program no longer exists or fails to start, show a clear message and fall back to the Windows default for that open.</li>
+<li>The program is launched with the file path as a single, safely quoted argument; no shell interpretation of the path.</li>
+<li>The choice is saved with the other settings and restored on start.</li>
+</ul>
+<hr>
+<h2 id="b12-investigation-workflow">B12. Investigation Workflow</h2>
+<ol>
+<li>Receive candidate folders from the existing scanner.</li>
+<li>Normalize folder paths.</li>
+<li>Identify filesystem links and ownership.</li>
+<li>Investigate running processes and services.</li>
+<li>Investigate application ownership.</li>
+<li>Inspect configuration and registry references.</li>
+<li>Classify data and reconstructibility.</li>
+<li>Verify duplicate equivalence.</li>
+<li>Analyze version and lifecycle relationships.</li>
+<li>Calculate dimension scores.</li>
+<li>Apply mandatory safety overrides.</li>
+<li>Calculate the final safety score.</li>
+<li>Calculate assessment confidence.</li>
+<li>Assign classification.</li>
+<li>Generate explanation and recommendation.</li>
+<li>Save the investigation report.</li>
+</ol>
+<p>Investigation is read-only. The engine must never delete, rename, move, or modify candidate folders during this process.</p>
+<hr>
+<h2 id="b13-technical-requirements">B13. Technical Requirements</h2>
+<h3 id="b13-1-architecture">B13.1 Architecture</h3>
+<p>Separate the functionality into independent components:</p>
+<ul>
+<li>Dependency Investigation Engine.</li>
+<li>Application Ownership Detector.</li>
+<li>Runtime Analysis Engine.</li>
+<li>Configuration Reference Analyzer.</li>
+<li>Registry Analyzer.</li>
+<li>Filesystem Relationship Analyzer.</li>
+<li>Data Classification Engine.</li>
+<li>Safety Scoring Engine.</li>
+<li>Confidence Scoring Engine.</li>
+<li>Explanation Generator.</li>
+<li>Report Generator.</li>
+</ul>
+<p>Each component must return structured evidence. The scoring engine must not rely on free-form AI conclusions.</p>
+<h3 id="b13-2-deterministic-assessment">B13.2 Deterministic assessment</h3>
+<p>The same evidence, scoring rules, and policy version must produce the same assessment. The scoring engine is <strong>rule-based and deterministic, not AI-based</strong>: safety decisions are governed by auditable rules, evidence and mandatory protection overrides.</p>
+<p>AI may assist with interpreting unfamiliar application structures, explaining technical findings, and suggesting additional investigation steps.</p>
+<p>AI must not: override hard safety rules, invent dependency evidence, convert unknown findings into safe findings, authorize deletion independently, or change the deterministic score without recorded evidence.</p>
+<h3 id="b13-3-permissions">B13.3 Permissions</h3>
+<p>The application must:</p>
+<ul>
+<li>Run without administrator privileges when possible.</li>
+<li>Clearly identify inaccessible sources.</li>
+<li>Request elevated permissions only when needed.</li>
+<li>Never bypass Windows access controls.</li>
+<li>Avoid scanning sensitive user information unnecessarily.</li>
+<li>Store investigation reports securely.</li>
+</ul>
+<h3 id="b13-4-performance">B13.4 Performance</h3>
+<ul>
+<li>Reuse hashes from the existing scanner.</li>
+<li>Avoid recalculating unchanged file hashes.</li>
+<li>Cache application ownership information.</li>
+<li>Support cancellation.</li>
+<li>Support resuming interrupted investigations.</li>
+<li>Show investigation progress.</li>
+<li>Avoid excessive disk activity.</li>
+<li>Avoid interfering with running applications.</li>
+</ul>
+<hr>
+<h2 id="b14-safety-and-security-requirements">B14. Safety and Security Requirements</h2>
+<p>The system must adopt a fail-safe approach. Mandatory rules:</p>
+<ol>
+<li>No automatic deletion.</li>
+<li>No automatic renaming.</li>
+<li>No automatic application termination.</li>
+<li>No automatic service termination.</li>
+<li>No modification of application configuration.</li>
+<li>No deletion of Windows system directories.</li>
+<li>No deletion of active application data.</li>
+<li>No deletion based solely on identical hashes.</li>
+<li>No deletion based solely on lack of running process references.</li>
+<li>No safe classification when critical dependencies remain unresolved.</li>
+</ol>
+<p>The engine must also detect: junctions and symbolic links, protected Windows directories, application package directories, shared profile directories, active database files, user-generated documents, cloud synchronization directories, backup and recovery directories.</p>
+<hr>
+<h2 id="b15-acceptance-criteria">B15. Acceptance Criteria</h2>
+<h4 id="assessment-accuracy">Assessment accuracy</h4>
+<ul class="chk">
+<li><input type="checkbox" disabled> Every candidate receives an individual safety score.</li>
+<li><input type="checkbox" disabled> Every candidate receives an assessment confidence score.</li>
+<li><input type="checkbox" disabled> Similarity and deletion safety are separate metrics.</li>
+<li><input type="checkbox" disabled> All score calculations are reproducible.</li>
+<li><input type="checkbox" disabled> Every score has an explanation.</li>
+<li><input type="checkbox" disabled> All missing evidence is explicitly reported.</li>
+<li><input type="checkbox" disabled> Mandatory overrides always take precedence.</li>
+</ul>
+<h4 id="dependency-investigation">Dependency investigation</h4>
+<ul class="chk">
+<li><input type="checkbox" disabled> Running processes are investigated.</li>
+<li><input type="checkbox" disabled> Relevant Windows services are investigated.</li>
+<li><input type="checkbox" disabled> Application ownership is investigated.</li>
+<li><input type="checkbox" disabled> Configuration references are investigated.</li>
+<li><input type="checkbox" disabled> Relevant registry references are investigated.</li>
+<li><input type="checkbox" disabled> Filesystem relationships are investigated.</li>
+<li><input type="checkbox" disabled> Cache and persistent data are distinguished.</li>
+<li><input type="checkbox" disabled> Application version relationships are investigated.</li>
+</ul>
+<h4 id="safety">Safety</h4>
+<ul class="chk">
+<li><input type="checkbox" disabled> No folder is modified during investigation.</li>
+<li><input type="checkbox" disabled> Unknown dependencies cannot be classified as safe by default.</li>
+<li><input type="checkbox" disabled> Identical application folders are not automatically considered interchangeable.</li>
+<li><input type="checkbox" disabled> Active dependencies result in an unsafe classification.</li>
+<li><input type="checkbox" disabled> User data receives appropriate protection.</li>
+<li><input type="checkbox" disabled> Inaccessible evidence sources are disclosed.</li>
+</ul>
+<h4 id="user-experience">User experience</h4>
+<ul class="chk">
+<li><input type="checkbox" disabled> Duplicate groups can be reviewed individually.</li>
+<li><input type="checkbox" disabled> Each candidate has a detailed report.</li>
+<li><input type="checkbox" disabled> Users can understand why a folder received its score.</li>
+<li><input type="checkbox" disabled> Users can distinguish safety from assessment confidence.</li>
+<li><input type="checkbox" disabled> Users can filter and sort results.</li>
+<li><input type="checkbox" disabled> Clicking outside the files panel unselects the selected file and clears its preview.</li>
+<li><input type="checkbox" disabled> Actions on the selected file (Open, Show in Explorer, Bigger preview) still work after clicking their buttons.</li>
+<li><input type="checkbox" disabled> Users can set the program used to open files, reset it to the Windows default, and the choice persists.</li>
+<li><input type="checkbox" disabled> A missing or failing chosen program falls back to the Windows default with a clear message.</li>
+</ul>
+<hr>
+<h2 id="b16-testing-scenarios">B16. Testing Scenarios</h2>
+<div class="tw"><table><thead><tr>
+<th>Scenario</th>
+<th>Expected behavior</th>
+</tr></thead><tbody>
+<tr><td>Identical Chrome and Brave extensions</td><td>Keep both</td></tr>
+<tr><td>Identical copies in separate application profiles</td><td>Investigate independently</td></tr>
+<tr><td>Verified temporary files with no dependencies</td><td>Potentially safe</td></tr>
+<tr><td>Duplicate personal documents</td><td>Require backup and ownership verification</td></tr>
+<tr><td>Old application version</td><td>Investigate rollback and lifecycle</td></tr>
+<tr><td>Active application database</td><td>Unsafe</td></tr>
+<tr><td>Application cache with documented regeneration</td><td>Potentially safe</td></tr>
+<tr><td>Folder referenced by Windows service</td><td>Unsafe</td></tr>
+<tr><td>Folder with inaccessible ownership information</td><td>Uncertain</td></tr>
+<tr><td>Identical folder containing unique metadata</td><td>Investigate metadata</td></tr>
+<tr><td>Junction pointing to another directory</td><td>Protect filesystem integrity</td></tr>
+<tr><td>Folder not referenced by running processes</td><td>Do not assume safe</td></tr>
+<tr><td>Application installation folder</td><td>Protect by default</td></tr>
+</tbody></table></div>
+<p>Testing must include both positive and negative cases.</p>
+<hr>
+<h2 id="b17-final-product-success-metrics">B17. Final Product Success Metrics</h2>
+<ul>
+<li>Percentage of folders receiving complete investigations.</li>
+<li>Percentage of assessments with sufficient evidence.</li>
+<li>Percentage of recommendations supported by recorded evidence.</li>
+<li>Number of false-safe classifications.</li>
+<li>Number of false-unsafe classifications.</li>
+<li>Number of unresolved dependency cases.</li>
+<li>Average investigation time.</li>
+<li>Estimated recoverable disk space.</li>
+<li>User acceptance of explanations.</li>
+</ul>
+<p>The most important metric: <strong>false-safe classification rate is zero in the validated safety test suite.</strong></p>
+<p>The system must prioritize preventing destructive mistakes over maximizing the amount of space recovered.</p>
+<hr>
+<h2 id="b18-final-product-definition">B18. Final Product Definition</h2>
+<p>The finished feature is an evidence-driven Windows folder deletion safety intelligence system.</p>
+<p>It must answer five questions for every duplicate folder:</p>
+<ol>
+<li>What is this folder?</li>
+<li>Which applications or Windows components depend on it?</li>
+<li>What would potentially happen if it were deleted?</li>
+<li>How safe is deletion, expressed as a percentage?</li>
+<li>How reliable is the evidence supporting that percentage?</li>
+</ol>
+<p>The final result must be understandable to a non-technical Windows user while retaining sufficient technical evidence for advanced users.</p>
+<p><strong>Product philosophy: Never recommend deleting a folder simply because another copy exists. Recommend deletion only when the specific candidate has been independently investigated and the available evidence supports that decision.</strong></p>
+<hr>
+<h1 id="part-c-implementation-status-gaps-and-verification">Part C - Implementation status, gaps and verification</h1>
+<h2 id="c1-status-of-the-safety-modules-version-2-0">C1. Status of the safety modules (version 2.0)</h2>
+<div class="tw"><table><thead><tr>
+<th>Spec section</th>
+<th>Status</th>
+<th>What the first version does</th>
+</tr></thead><tbody>
+<tr><td>B3 Three separate measures</td><td>Done</td><td>Similarity (100% for scanner sets), deletion safety, and assessment confidence are separate fields, shown side by side.</td></tr>
+<tr><td>B4.1 Runtime</td><td>Partly</td><td>Process list (path and command line), Windows services, scheduled tasks, and an exclusive-open test on up to 40 sample files. Open file handles cannot be listed without extra tools and are reported as <strong>Unknown</strong>.</td></tr>
+<tr><td>B4.2 Ownership</td><td>Partly</td><td>By location (Windows, Program Files, WindowsApps, AppData, user folders), registered install locations (Uninstall keys), and folder markers (manifest.json, package.json, .git, exe/dll). Result: Confirmed / Probable / Unknown. Shared ownership is detected when another copy belongs to a different application. No catalog of known application layouts yet.</td></tr>
+<tr><td>B4.3 Static dependencies</td><td>Partly</td><td>Read-only search of up to 150 small config files next to the folder, and Start Menu / Desktop / Startup shortcuts. Nothing is executed or modified. Application databases are not searched.</td></tr>
+<tr><td>B4.4 Registry</td><td>Partly</td><td>Read-only: Uninstall keys, Run / RunOnce, App Paths, User Shell Folders, service image paths. Active vs. historical is distinguished (installer-source paths are historical). App package registrations and file associations are not inspected and are reported as Unknown.</td></tr>
+<tr><td>B4.5 Filesystem relationships</td><td>Partly</td><td>Junctions and symbolic links (not followed), hard links (sampled), hidden files, structure re-check against a kept copy, nested copies. The seven relationship classes are not all labelled separately.</td></tr>
+<tr><td>B4.6 Cache / temporary data</td><td>Partly</td><td>Detects rebuildable caches (only when an owning application is found), application state and databases, user documents/media, backups, installer/update packages. A name like &quot;cache&quot; alone is not trusted.</td></tr>
+<tr><td>B4.7 Version / lifecycle</td><td>Partly</td><td>Version numbers in folder names, newer sibling versions, update/rollback folder names.</td></tr>
+<tr><td>B5 Evidence records</td><td>Done</td><td>Each record has ID, category, source, finding, result (Positive / Negative / Unknown), timestamp, reliability, impact, explanation. Unknown is never treated as safe.</td></tr>
+<tr><td>B6 Scoring</td><td>Done</td><td>The seven weighted dimensions (20/20/15/15/15/10/5), a missing-evidence penalty beyond two standing gaps, and mandatory caps: protected Windows folder 2, installation folder 5, active dependency 10, required database/state 10, last remaining copy 10, unique user data without a kept copy 20, independently owned copy 25, unresolved filesystem link 30, cloud-sync folder 60, critical source inaccessible 60. The most restrictive cap wins.</td></tr>
+<tr><td>B7 Classification and confidence</td><td>Done</td><td>Five classes by percentage; confidence from evidence reliability and coverage, freshness and consistency; a safe-looking score with confidence below 75 becomes &quot;Keep and investigate&quot;.</td></tr>
+<tr><td>B8 Per-candidate assessment</td><td>Done</td><td>Every copy is assessed alone, for the current marks (changing the marks invalidates and re-runs the assessment).</td></tr>
+<tr><td>B9 Report</td><td>Done</td><td>Folder facts, score, classification, confidence, evidence, risks, missing information, recommendation, and apparent / unique / recoverable space (hard-link aware). Saved to <code>%LOCALAPPDATA%\DupCleaner\safety-reports.json</code> and exportable as text.</td></tr>
+<tr><td>B10 Explanation engine</td><td>Done</td><td>Explanations are assembled only from recorded evidence; no AI is used and none can change a score.</td></tr>
+<tr><td>B11 UI</td><td>Mostly</td><td>Group overview line, per-copy safety text on each card, a <strong>Safety review...</strong> window with the comparison table, score breakdown (including penalties and caps) and the full report, and a filter by class or &quot;Not assessed yet&quot;. Not yet: filters for application-associated / unknown ownership / high recovery / low confidence.</td></tr>
+<tr><td>B12 Workflow</td><td>Mostly</td><td>Read-only investigation, then scoring, overrides, confidence, classification, explanation, saved report. Cancellation is only available for &quot;Investigate all listed sets&quot; (Esc); interrupted investigations are not resumed.</td></tr>
+<tr><td>B13 Technical</td><td>Mostly</td><td>Deterministic rules, shared system snapshot cached for five minutes, scanner hashes reused, runs without administrator rights. No separate processes per component.</td></tr>
+<tr><td>B14 Safety rules</td><td>Done</td><td>No automatic deletion, renaming, or termination; Apply and Delete now warn when a copy to be removed was assessed below 65%.</td></tr>
+</tbody></table></div>
+<h2 id="c1a-what-version-2-0-adds">C1a. What version 2.0 adds</h2>
+<div class="tw"><table><thead><tr>
+<th>Area</th>
+<th>Change</th>
+</tr></thead><tbody>
+<tr><td>Two scores per set</td><td><strong>Safe to keep only one</strong> (0-100%): how safe it is to delete the extra copies and live with the best remaining one. It does not depend on what is ticked; it is the weakest deleted copy under the best choice of copy to keep. <strong>Risk if you delete all copies</strong> (Low / Moderate / High / Very high): what would be lost if every copy went; user documents and media are always high. Both are shown on the set line, with the reason for the risk.</td></tr>
+<tr><td>Score colours</td><td>List and chart colours: above 90% green, 80-90% orange, below 80% red.</td></tr>
+<tr><td>Better spread of scores</td><td>Personal duplicates no longer all land on 97%: the score considers whether the kept copy is on the same drive, how recently the folder changed, whether it holds scripts / settings / program files, and whether the kept copy sits in a cloud-sync folder (OneDrive, Dropbox, Google Drive, MEGAsync).</td></tr>
+<tr><td>Automatic investigation</td><td>After a scan every duplicate-folder set is scored in the background, the set that frees the most space first (about 0.3 s per set). Esc stops it. Per-copy detail is computed when a set is opened.</td></tr>
+<tr><td>Safe default</td><td>A set that scores below 80% starts with every copy on KEEP (judged once per set, remembered in <code>safety-judged2.txt</code>); ticking copies for deletion stays possible.</td></tr>
+<tr><td>Sorting</td><td>&quot;Largest and safest&quot; order and a total score column in the list; the list is re-ordered at most every 2.5 s and only when the order changed, so it does not flicker while scores arrive.</td></tr>
+<tr><td>Preview donut</td><td>When nothing is selected the donut shows space saved so far plus the space still to free, split into the three score colours and &quot;not yet scored&quot;.</td></tr>
+<tr><td>Error log</td><td>Errors the program handles quietly are written to <code>%LOCALAPPDATA%\DupCleaner\errors.log</code> (time, line, message, and how many times; logged at 1, 10, 100, 1000... occurrences, capped at 5 MB). It found a real fault: quoted install paths from the registry made <code>GetFullPath</code> fail thousands of times; paths are now cleaned and remembered.</td></tr>
+<tr><td>Performance</td><td>Folder facts, the system snapshot search index, parent-folder config scans and path normalisation are cached; scoring one set went from about 3 s to about 0.3 s.</td></tr>
+<tr><td>Privacy</td><td>The documentation screenshots use a made-up demo folder; the program writes nothing outside <code>%LOCALAPPDATA%\DupCleaner</code> and makes no network connections.</td></tr>
+</tbody></table></div>
+<h2 id="c2-known-gaps-and-next-steps">C2. Known gaps and next steps</h2>
+<ol>
+<li>Open file handles and AppX/MSIX package registrations are not inspected; they are shown as Unknown evidence and lower confidence.</li>
+<li>Application-specific storage knowledge (Chrome, Brave, Edge, Office, game launchers) is limited to location rules; a catalog of known layouts would raise accuracy.</li>
+<li>Remaining filters from B11.4 (application-associated, non-application, unknown ownership, high storage recovery, low confidence).</li>
+<li>Resume of interrupted investigations and a progress bar for the single-set assessment.</li>
+<li>A validated safety test suite that measures false-safe and false-unsafe rates (B17); the current checks are the scenario tests listed below.</li>
+<li>The Settings page keeps the new &quot;Open files with&quot; card at the bottom; very small windows need to scroll to it.</li>
+</ol>
+<h2 id="c3-verification-performed-versions-1-1-and-2-0">C3. Verification performed (versions 1.1 and 2.0)</h2>
+<p>All tests ran on a copy of the program with an isolated data folder and made-up files, never on real data.</p>
+<div class="tw"><table><thead><tr>
+<th>Area</th>
+<th>Check</th>
+<th>Result</th>
+</tr></thead><tbody>
+<tr><td>Outside click</td><td>Click inside the files panel, on the preview buttons, and outside it (direct call and a real posted mouse message)</td><td>Selection kept / kept / cleared; preview cleared</td></tr>
+<tr><td>Open with</td><td>Per-type categories, JSON save and reload, launch of the chosen program, label per category</td><td>Pass</td></tr>
+<tr><td>Safety: identical Chrome and Brave extension copies</td><td>Different owners</td><td>25% Unsafe, &quot;Independently owned copy&quot; cap</td></tr>
+<tr><td>Safety: running program in the folder</td><td>A running copy of a console program</td><td>10% Unsafe, active dependency</td></tr>
+<tr><td>Safety: Windows folder / Program Files</td><td>Protected location</td><td>2% / 5%</td></tr>
+<tr><td>Safety: last remaining copy</td><td>All other copies marked</td><td>10%</td></tr>
+<tr><td>Safety: verified temporary export</td><td>Plain folder, no references</td><td>Uncertain (about 76%), not &quot;safe&quot;, because ownership is unknown</td></tr>
+<tr><td>Safety: marks change</td><td>Toggle a copy&#39;s mark</td><td>Assessment invalidated and re-run</td></tr>
+<tr><td>Safety: filters, review window, assess all, saved report</td><td></td><td>Pass</td></tr>
+<tr><td>Two scores (v2.0)</td><td>Photo pairs, program folders, caches, browser extensions and 45 real sets on a copy of the program</td><td>Photo pair about 93% keep-one with Very high delete-all risk; program folders 5%; caches about 76% with Low risk; Chrome / Brave extensions 25%</td></tr>
+<tr><td>Speed (v2.0)</td><td>Timing of 12 sets before and after caching</td><td>about 3 s to 0.3 s per set, identical scores</td></tr>
+<tr><td>Error log (v2.0)</td><td>Run the app and read <code>errors.log</code></td><td>Found and fixed the repeated GetFullPath fault; none logged after the fix</td></tr>
+<tr><td>Removal protection</td><td>Risky removals produce a warning before Apply / Delete now</td><td>Implemented; confirmation dialog not automated</td></tr>
+</tbody></table></div>
+</main></div></body></html>
